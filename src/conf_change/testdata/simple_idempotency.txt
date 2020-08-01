@@ -1,0 +1,68 @@
+cmd: simple
+args: v=(1)
+voters=(1)
+1: StateProbe match=0 next=0
+
+--------------------------------
+cmd: simple
+args: v=(1)
+voters=(1)
+1: StateProbe match=0 next=0
+
+--------------------------------
+cmd: simple
+args: v=(2)
+voters=(1 2)
+1: StateProbe match=0 next=0
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: l=(1)
+voters=(2) learners=(1)
+1: StateProbe match=0 next=0 learner
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: l=(1)
+voters=(2) learners=(1)
+1: StateProbe match=0 next=0 learner
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: r=(1)
+voters=(2)
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: r=(1)
+voters=(2)
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: v=(3)
+voters=(2 3)
+2: StateProbe match=0 next=2
+3: StateProbe match=0 next=7
+
+--------------------------------
+cmd: simple
+args: r=(3)
+voters=(2)
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: r=(3)
+voters=(2)
+2: StateProbe match=0 next=2
+
+--------------------------------
+cmd: simple
+args: r=(4)
+voters=(2)
+2: StateProbe match=0 next=2

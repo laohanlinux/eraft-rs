@@ -1,0 +1,128 @@
+# The empty config always announces a won vote.
+cmd: vote
+output:
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(1) votes=(_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(1) votes=(n)
+output:
+VoteLost
+
+--------------------------------
+cmd: vote
+args: cfg=(123) votes=(y)
+output:
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(4,8) votes=(_,_)
+output:
+VotePending
+
+
+--------------------------------
+# With two voters, a single rejection loses the vote.
+cmd: vote
+args: cfg=(4,8) votes=(n,_)
+output:
+VoteLost
+
+--------------------------------
+cmd: vote
+args: cfg=(4,8) votes=(y,_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(4,8) votes=(n,y)
+output:
+VoteLost
+
+--------------------------------
+cmd: vote
+args: cfg=(4,8) votes=(y,y)
+output:
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(_,_,_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(n,_,_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(y,_,_)
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(n,n,_)
+output:
+VoteLost
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(y,n,_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(y,y,_)
+output:
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(y,y,n)
+output:
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(2,4,7) votes=(n,y,n)
+output:
+VoteLost
+
+--------------------------------
+# Test some random example with seven nodes (why not).
+cmd: vote
+args: cfg=(1,2,3,4,5,6,7) votes=(y,y,n,y,_,_,_)
+output:
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(1,2,3,4,5,6,7) votes=(_,y,y,_,n,y,n)
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(1,2,3,4,5,6,7) votes=(y,y,n,y,_,n,y)
+VoteWon
+
+--------------------------------
+cmd: vote
+args: cfg=(1,2,3,4,5,6,7) votes=(y,y,_,n,y,n,n)
+VotePending
+
+--------------------------------
+cmd: vote
+args: cfg=(1,2,3,4,5,6,7) votes=(y,y,n,y,n,n,n)
+VoteLost

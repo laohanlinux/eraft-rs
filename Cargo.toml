@@ -1,0 +1,31 @@
+[package]
+name = "eraft-rs"
+version = "0.1.0"
+authors = ["Rg"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+protobuf = { version = "2", features = ["with-bytes"] }
+bytes = "0.5"
+anyhow = "1.0.31"
+thiserror = "1.0"
+getset = "0.0.9"
+nom = "5"
+chrono = "0.4.12"
+env_logger="0.7.1"
+rand = "0.7.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "0.2", features = ["full"] }
+futures = { version = "0.3.5", default-features = true }
+lazy_static="1.4.0"
+async-trait = "0.1.36"
+smol = { version = "0.3", features = ["tokio02"] }
+async-channel = "*"
+[dev-dependencies]
+flexi_logger = { version = "0.15", features = ["specfile", "ziplogs"] }
+[build-dependencies]
+protoc-rust = "2.0"

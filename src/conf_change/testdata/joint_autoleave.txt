@@ -1,0 +1,29 @@
+# Test the autoleave argument to EnterJoint. It defaults to false in the
+# datadriven tests. The flag has no associated semantics in this package,
+# it is simply passed through.
+cmd: simple
+args: v=(1)
+voters=(1)
+1: StateProbe match=0 next=0
+
+--------------------------------
+# Autoleave is reflected in the config.
+cmd: enter-joint
+args: autoleave=(true) v=(2) v=(3)
+voters=(1 2 3)&&(1) autoleave
+1: StateProbe match=0 next=0
+2: StateProbe match=0 next=1
+3: StateProbe match=0 next=1
+
+--------------------------------
+# Can't enter-joint twice, even if autoleave changes.
+cmd: enter-joint
+args: autoleave=(false)
+config is already joint
+
+--------------------------------
+cmd: leave-joint
+voters=(1 2 3)
+1: StateProbe match=0 next=0
+2: StateProbe match=0 next=1
+3: StateProbe match=0 next=1

@@ -1,0 +1,22 @@
+# Verify that operations upon entering the joint state are idempotent, i.e.
+# removing an absent node is fine, etc.
+
+cmd: simple
+args: v=(1)
+voters=(1)
+1: StateProbe match=0 next=0
+
+--------------------------------
+cmd: enter-joint
+args: r=(1) r=(2) r=(9) v=(2) v=(3) v=(4) v=(2) v=(3) v=(4) l=(2) l=(2) r=(4) r=(4) l=(1) l=(1)
+voters=(3)&&(1) learners=(2) learners_next=(1)
+1: StateProbe match=0 next=0
+2: StateProbe match=0 next=1 learner
+3: StateProbe match=0 next=1
+
+--------------------------------
+cmd: leave-joint
+voters=(3) learners=(1 2)
+1: StateProbe match=0 next=0 learner
+2: StateProbe match=0 next=1 learner
+3: StateProbe match=0 next=1

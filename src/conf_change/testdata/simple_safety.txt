@@ -1,0 +1,63 @@
+cmd: simple
+args: l=(1)
+removed all voters
+
+--------------------------------
+cmd: simple
+args: v=(1)
+voters=(1)
+1: StateProbe match=0 next=1
+
+--------------------------------
+cmd: simple
+args: v=(2) l=(3)
+voters=(1 2) learners=(3)
+1: StateProbe match=0 next=1
+2: StateProbe match=0 next=2
+3: StateProbe match=0 next=2 learner
+
+--------------------------------
+cmd: simple
+args: r=(1) v=(5)
+more than one voter changed without entering joint config
+
+--------------------------------
+cmd: simple
+args: r=(1) r=(2)
+removed all voters
+
+--------------------------------
+cmd: simple
+args: v=(3) v=(4)
+more than one voter changed without entering joint config
+
+--------------------------------
+cmd: simple
+args: l=(1) v=(5)
+more than one voter changed without entering joint config
+
+--------------------------------
+cmd: simple
+args: l=(1) l=(2)
+removed all voters
+
+--------------------------------
+cmd: simple
+args: l=(2) l=(3) l=(4) l=(5)
+voters=(1) learners=(2 3 4 5)
+1: StateProbe match=0 next=1
+2: StateProbe match=0 next=2 learner
+3: StateProbe match=0 next=2 learner
+4: StateProbe match=0 next=8 learner
+5: StateProbe match=0 next=8 learner
+
+--------------------------------
+cmd: simple
+args: r=(1)
+removed all voters
+
+--------------------------------
+cmd: simple
+args: r=(2) r=(3) r=(4) r=(5)
+voters=(1)
+1: StateProbe match=0 next=1

@@ -1,0 +1,6 @@
+# NodeID zero is ignored.
+cmd: simple
+args: v=(1) r=(0) v=(0) l=(0)
+output:
+voters=(1)
+1: StateProbe match=0 next=0
