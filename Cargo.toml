@@ -15,16 +15,17 @@ thiserror = "1.0"
 getset = "0.0.9"
 nom = "5"
 chrono = "0.4.12"
-env_logger="0.7.1"
+env_logger = "0.7.1"
 rand = "0.7.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "0.2", features = ["full"] }
 futures = { version = "0.3.5", default-features = true }
-lazy_static="1.4.0"
+lazy_static = "1.4.0"
 async-trait = "0.1.36"
 smol = { version = "0.3", features = ["tokio02"] }
-async-channel = "*"
+async-channel = "1.4.0"
+async-io = "0.1.9"
 [dev-dependencies]
 flexi_logger = { version = "0.15", features = ["specfile", "ziplogs"] }
 [build-dependencies]

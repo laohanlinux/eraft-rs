@@ -39,6 +39,7 @@ pub(crate) struct ReadIndexStatus {
     pub acks: HashMap<u64, bool>,
 }
 
+#[derive(Clone)]
 pub struct ReadOnly {
     pub(crate) option: ReadOnlyOption,
     pub(crate) pending_read_index: HashMap<Vec<u8>, ReadIndexStatus>,

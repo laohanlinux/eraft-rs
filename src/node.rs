@@ -14,30 +14,35 @@
 
 use crate::conf_change::conf_change::Changer;
 use crate::conf_change::restore::restore;
-use crate::raft_log::RaftLog;
 use crate::raft::{self, Config, Raft, RaftError, StateType, NONE};
-use crate::raftpb::raft::MessageType::{MsgHup, MsgProp, MsgReadIndex, MsgSnapStatus, MsgTransferLeader, MsgUnreachable};
-use crate::raftpb::raft::{ConfChange, ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot};
+use crate::raft_log::RaftLog;
+use crate::raftpb::raft::MessageType::{
+    MsgHup, MsgProp, MsgReadIndex, MsgSnapStatus, MsgTransferLeader, MsgUnreachable,
+};
+use crate::raftpb::raft::{
+    ConfChange, ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot,
+};
 use crate::raftpb::{equivalent, ConfChangeI};
 use crate::rawnode::RawNode;
 use crate::read_only::{ReadOnly, ReadState};
 use crate::status::Status;
 use crate::storage::{SafeMemStorage, Storage};
 use crate::tracker::ProgressTracker;
-use async_trait::async_trait;
-use bytes::Bytes;
-use futures::TryFutureExt;
-use protobuf::{ProtobufEnum, RepeatedField};
-use std::error::Error;
-use tokio::select;
 use crate::util::is_local_message;
 use async_channel::{self, unbounded, Receiver, Sender};
+use async_trait::async_trait;
+use bytes::Bytes;
 use futures::future::err;
+use futures::TryFutureExt;
+use protobuf::{ProtobufEnum, RepeatedField};
+use smol::Task;
+use std::default::Default;
+use std::error::Error;
 use std::sync::Arc;
+use tokio::select;
 use tokio::task;
 
-type SafeDynError = Box<Error + Send + Sync + 'static>;
-type SafeResult<T: Send + Sync> = Result<T, Box<Error + Send + Sync + 'static>>;
+type SafeResult<T: Send + Sync + Clone> = Result<T, RaftError>;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum SnapshotStatus {
@@ -69,7 +74,7 @@ impl PartialEq for SoftState {
 /// encapsulates the entries and messages that are ready to read,
 /// be saved to stable storage, committed or sent to other peers.
 /// All fields in Ready are read-only.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Ready {
     /// The current volatile state of a Node.
     /// `SoftState` will be nil if there is no update.
@@ -111,7 +116,11 @@ pub struct Ready {
 }
 
 impl Ready {
-    pub fn new<S: Storage + Clone>(raft: &Raft<S>, prev_soft_st: Option<SoftState>, prev_hard_st: HardState) -> Ready {
+    pub fn new<S: Storage + Clone>(
+        raft: &Raft<S>,
+        prev_soft_st: Option<SoftState>,
+        prev_hard_st: HardState,
+    ) -> Ready {
         let mut ready = Ready {
             soft_state: prev_soft_st.clone(),
             hard_state: prev_hard_st.clone(),
@@ -255,17 +264,18 @@ fn is_hard_state_equal(a: &HardState, b: &HardState) -> bool {
     a.get_term() == b.get_term() && a.get_vote() == b.get_vote() && a.get_commit() == b.get_commit()
 }
 
-// returns true if the given HardState is empty.
+/// returns true if the given HardState is empty.
 pub fn is_empty_hard_state(st: &HardState) -> bool {
     let empty = HardState::new();
     is_hard_state_equal(&empty, st)
 }
 
-// returns true if the given snapshot is empty.
-pub(crate) fn is_empty_snapshot(sp: &Snapshot) -> bool {
+/// returns true if the given snapshot is empty.
+pub fn is_empty_snapshot(sp: &Snapshot) -> bool {
     sp.get_metadata().get_index() == 0
 }
 
+#[derive(Clone)]
 pub(crate) struct MsgWithResult {
     m: Option<Message>,
     result: InnerChan<SafeResult<()>>,
@@ -310,17 +320,26 @@ struct InnerChan2<T> {
 impl<T> Default for InnerChan<T> {
     fn default() -> Self {
         let (tx, rx) = unbounded();
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
 }
 
 impl<T> InnerChan<T> {
     pub fn new() -> InnerChan<T> {
         let (tx, rx) = unbounded();
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
     pub fn new_with_channel(tx: Sender<T>, rx: Receiver<T>) -> InnerChan<T> {
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
 
     pub fn tx(&self) -> Sender<T> {
@@ -338,10 +357,28 @@ impl<T> InnerChan<T> {
 }
 
 pub struct Peer {
-    id: u64,
-    context: Vec<u8>,
+    pub id: u64,
+    pub context: Vec<u8>,
 }
 
+pub async fn start_node<S: Storage + Send + Sync + Clone + 'static>(
+    c: Config<S>,
+    peers: Vec<Peer>,
+) -> impl Node {
+    assert!(!peers.is_empty(), "no peers given; use RestartNode instead");
+    let mut raw_node = RawNode::new(c);
+    raw_node.boot_strap(peers);
+
+    let mut node = InnerNode::new(raw_node);
+    let mut node_run = node.clone();
+    smol::Task::spawn(async move {
+        node_run.run().await;
+    })
+    .detach();
+    node
+}
+
+#[derive(Clone)]
 pub(crate) struct InnerNode<S: Storage + Send + Sync + Clone> {
     pub(crate) propo_c: InnerChan<MsgWithResult>,
     pub(crate) recv_c: InnerChan<Message>,
@@ -353,11 +390,11 @@ pub(crate) struct InnerNode<S: Storage + Send + Sync + Clone> {
     done: InnerChan<()>,
     stop: InnerChan<()>,
     status: InnerChan<Sender<Status>>,
-    raw_node: Option<RawNode<S>>,
+    raw_node: RawNode<S>,
 }
 
 impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
-    pub fn new_node() -> InnerNode<S> {
+    fn new(raw_node: RawNode<S>) -> Self {
         InnerNode {
             propo_c: InnerChan::default(),
             recv_c: InnerChan::default(),
@@ -369,71 +406,19 @@ impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
             done: InnerChan::default(),
             stop: InnerChan::default(),
             status: InnerChan::default(),
-            raw_node: None,
+            raw_node,
         }
     }
 
-    async fn run(&self) {
-        let mut prop_rx: Option<Receiver<MsgWithResult>> = Some(self.propo_c.rx());
-        let mut readyc: Option<Sender<Ready>> = None;
-        let mut advance: Option<Receiver<()>> = None;
-        let mut rd: Option<Ready> = None;
-        let raw_node = self.raw_node.as_ref().unwrap();
-        let mut lead = NONE;
-        // while true {
-        //     if advance.is_some() {
-        //         readyc = None;
-        //     } else if raw_node.has_ready() {
-        //         // Populate a Ready. Note that this Ready is not guaranteed to
-        //         // actually be handled. We will arm readyc, but there's no guarantee
-        //         // that we will actually send on it. It's possible that we will
-        //         // service another channel instead, loop around, and then populate
-        //         // the Ready again. We could instead force the previous Ready to be
-        //         // handled first, but it's generally good to emit larger Readys plus
-        //         // it simplifies testing (by emitting less frequently and more
-        //         // predictably).
-        //         rd = Some(raw_node.ready_without_accept());
-        //         readyc = Some(self.ready_c.tx());
-        //     }
-        //     if lead != raw_node.raft.lead {
-        //         if raw_node.raft.has_leader() {
-        //             if lead == NONE {
-        //                 info!(
-        //                     "raft.node: {:#} elected leader {:#} at term {}",
-        //                     raw_node.raft.id, raw_node.raft.lead, raw_node.raft.term
-        //                 );
-        //                 // propo_c = Some(self.propo_c.rx());
-        //             }
-        //         } else {
-        //             info!(
-        //                 "raft.node: {:#x} lost leader {:#x} at term {}",
-        //                 raw_node.raft.id, lead, raw_node.raft.term
-        //             );
-        //             // propc.take();
-        //         }
-        //         lead = raw_node.raft.lead;
-        //     }
-        //
-        //     let prop_rx = prop_rx.as_ref().unwrap();
-        //     let recv_rx = self.recv_c.rx();
-        //     let conf_rx = self.conf_c.rx();
-        //     let tick_rx = self.tick_c.rx();
-        //     let state_rx = self.status.rx();
-        //     let stop_rx = self.stop.rx();
-        //     let advance_rx = advance.
-        //     // TODO: maybe buffer the config propose if there exists one (the way
-        //     // described in raft dissertation)
-        //     // Currently it is dropped in Step silently.
-        //     // select! {
-        //     //     pm = prop_rx.recv() => {}
-        //     //     m = recv_rx.recv() => {}
-        //     //     cc = conf_rx.recv() => {}
-        //     //     _ = tick_rx.recv() => {}
-        //     //     _ = rd.recv() => {}
-        //     //     _ = advance
-        //     // }
-        //     break;
-        // }
+    async fn run(&mut self) {
+        select! {
+            _ = self.tick_c.rx_ref().recv() => {
+                self.tick();
+            }
+            status = self.status.rx_ref().recv() => {
+
+            }
+        }
     }
 
     async fn do_step(&self, m: Message) -> SafeResult<()> {
@@ -449,7 +434,7 @@ impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
             select! {
                 _ = self.recv_c.tx.as_ref().unwrap().send(m.clone()) => return Ok(()),
                 _ = self.done.rx.as_ref().unwrap().recv() => {
-                    return Err(Box::new(RaftError::Stopped));
+                    return Err(RaftError::Stopped);
                 }
             }
         }
@@ -468,16 +453,19 @@ impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
                 }
             }
             _ = self.done.rx.as_ref().unwrap().recv() => {
-                return Err(Box::new(RaftError::Stopped));
+                return Err(RaftError::Stopped);
             }
         }
 
         // wait result
         select! {
             res = rx.recv() => return res.unwrap(),
-            _ = self.done.rx_ref().recv() => return Err(Box::new(RaftError::Stopped))
+            _ = self.done.rx_ref().recv() => return Err(RaftError::Stopped)
         }
         Ok(())
+    }
+    fn status(&self) -> Status {
+        Status::from(&self.raw_node.raft)
     }
 }
 
@@ -486,7 +474,7 @@ impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
     async fn tick(&mut self) {
         let mut tick = self.tick_c.tx.as_mut().unwrap();
         let mut done = self.done.rx.as_mut().unwrap();
-        let id = self.raw_node.as_ref().unwrap().raft.id;
+        let id = self.raw_node.raft.id;
         select! {
              _ = tick.send(()) => {}
              _ = done.recv() => {}
@@ -614,19 +602,20 @@ impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
     }
 
     async fn stop(&self) {
+        info!("start to stop node");
         let done = self.done.rx_ref();
         let stop = self.stop.tx();
         select! {
             _ = stop.send(()) => {},
-            _ = done.recv() => {}
+            _ = done.recv() => return
         }
         // Block until the stop has been acknowledged by run()
         done.recv().await;
     }
 }
 
-// MustSync returns true if the hard state and count of Raft entries indicate
-// that a synchronous write to persistent storage is required.
+/// MustSync returns true if the hard state and count of Raft entries indicate
+/// that a synchronous write to persistent storage is required.
 pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
     // Persistent state on all servers:
     // (Updated on stable storage before responding to RPCs)
@@ -640,18 +629,30 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 mod tests {
     use super::*;
     use crate::node::{InnerChan, InnerNode, Node};
+    use crate::raft::{ReadOnlyOption, StepFn, NO_LIMIT};
     use crate::raftpb::raft::MessageType::MsgProp;
     use crate::raftpb::raft::{Message, MessageType};
     use crate::storage::SafeMemStorage;
     use crate::util::is_local_message;
+    use lazy_static::lazy_static;
+    use nom::error::append_error;
     use protobuf::ProtobufEnum;
-
+    use smol::Task;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::Duration;
+    lazy_static! {
+        /// This is an example for using doc comment attributes
+        static ref msgs: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(vec![]));
+    }
+    // ensures that node.step sends msgProp to propc chan
+    // and other kinds of messages to recvc chan.
     #[test]
     fn t_node_step() {
         flexi_logger::Logger::with_env().start();
         smol::block_on(async {
             for msgn in 0..MessageType::MsgPreVoteResp.value() {
-                let mut node: InnerNode<SafeMemStorage> = InnerNode::new_node();
+                let mut node: InnerNode<SafeMemStorage> =
+                    InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
                 node.propo_c = InnerChan::new();
                 node.recv_c = InnerChan::new();
                 let msgt = MessageType::from_i32(msgn).unwrap();
@@ -661,16 +662,111 @@ mod tests {
                 // Proposal goes to proc chan. Others go to recvc chan.
                 if msgt == MsgProp {
                     let proposal_rx = node.propo_c.rx();
-                    assert!(proposal_rx.try_recv().is_ok(), "{}: cannot receive {:?} on propc chan", msgn, msgt);
+                    assert!(
+                        proposal_rx.try_recv().is_ok(),
+                        "{}: cannot receive {:?} on propc chan",
+                        msgn,
+                        msgt
+                    );
                 } else {
                     let recv = node.recv_c.rx();
                     if is_local_message(msgt) {
-                        assert!(recv.try_recv().is_err(), "{}: step should ignore {:?}", msgn, msgt);
+                        assert!(
+                            recv.try_recv().is_err(),
+                            "{}: step should ignore {:?}",
+                            msgn,
+                            msgt
+                        );
                     } else {
-                        assert!(recv.try_recv().is_ok(), "{}: cannot receive {:?} on recvc chan", msgn, msgt);
+                        assert!(
+                            recv.try_recv().is_ok(),
+                            "{}: cannot receive {:?} on recvc chan",
+                            msgn,
+                            msgt
+                        );
                     }
                 }
             }
         });
+    }
+
+    // TODO
+    // cancal and stop should unblock step()
+    #[test]
+    fn t_node_step_unblock() {}
+
+    fn append_step(raft: &mut Raft<SafeMemStorage>, m: Message) -> Result<(), RaftError> {
+        msgs.lock().unwrap().push(m);
+        Ok(())
+    }
+
+    // ensure that node.Propose sends the given proposal to the underlying raft.
+    #[test]
+    fn t_node_process() {
+        flexi_logger::Logger::with_env().start();
+        smol::run(async {
+            {
+                msgs.lock().unwrap().clear();
+            }
+            let s = SafeMemStorage::new();
+            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+            if let Err(err) = node.campaign().await {
+                panic!(err);
+            }
+            loop {
+                let ready_rx = node.ready();
+                let rd = ready_rx.recv().await.unwrap();
+                s.wl().append(rd.entries);
+                // change the step function to append_step until this raft becomes leader.
+                if rd.soft_state.as_ref().unwrap().lead == node.raw_node.raft.id {
+                    node.raw_node.raft.step = Some(Box::new(append_step));
+                    node.advance();
+                    break;
+                }
+                node.advance();
+            }
+
+            assert!(node.propose("somedata".as_bytes()).is_ok());
+            node.stop();
+            let msgs_wl = msgs.lock().unwrap();
+            assert_eq!(msgs_wl.len(), 1, "len(msgs) = {}, want 1", msgs_wl.len());
+        });
+    }
+
+    fn new_test_raw_node(
+        id: u64,
+        peers: Vec<u64>,
+        election_tick: u64,
+        heartbeat_tick: u64,
+        s: SafeMemStorage,
+    ) -> RawNode<SafeMemStorage> {
+        RawNode::new(new_test_conf(id, peers, election_tick, heartbeat_tick, s))
+    }
+
+    fn new_test_conf(
+        id: u64,
+        peers: Vec<u64>,
+        election_tick: u64,
+        heartbeat_tick: u64,
+        s: SafeMemStorage,
+    ) -> Config<SafeMemStorage> {
+        Config {
+            id,
+            peers,
+            learners: vec![],
+            election_tick,
+            heartbeat_tick,
+            storage: s,
+            applied: 0,
+            max_size_per_msg: NO_LIMIT,
+            max_committed_size_per_ready: 0,
+            max_uncommitted_entries_size: 0,
+            max_inflight_msgs: 1 << 8,
+            check_quorum: false,
+            pre_vote: false,
+            read_only_option: ReadOnlyOption::ReadOnlySafe,
+            disable_proposal_forwarding: false,
+        }
     }
 }

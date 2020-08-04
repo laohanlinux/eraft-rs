@@ -22,7 +22,7 @@ use crate::util::limit_size;
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Clone, Debug, PartialEq)]
 pub enum RaftLogError {
     #[error("first letter must be lowercase but was {:?}", (.0))]
     FromStorage(StorageError),
@@ -36,9 +36,10 @@ pub enum RaftLogError {
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
-pub struct RaftLog<T: Storage> {
+#[derive(Clone)]
+pub struct RaftLog<T: Storage + Clone> {
     // storage contains all stable entries since the last snapshot
-    storage: T,
+    pub(crate) storage: T,
 
     // unstable contains all unstable entries and snapshot
     // they will be saved into storage
@@ -63,7 +64,7 @@ pub struct RaftLog<T: Storage> {
     max_next_ents_size: u64,
 }
 
-impl<T: Storage> RaftLog<T> {
+impl<T: Storage + Clone> RaftLog<T> {
     // newLog returns log using the given storage. It recovers the log
     // to the state that it just commits and applies the latest snapshot.
     pub fn new(storage: T) -> Self {
@@ -92,13 +93,22 @@ impl<T: Storage> RaftLog<T> {
     // maybe_append returns `None` if the entries cannot be appended. Otherwise,
     // it returns `Some(last index of new entries)`
     // NOTICE: ents[0].index = index + 1, ents[0].term <= log_term if ents not empty, the message come from leader node
-    pub(crate) fn maybe_append(&mut self, index: u64, log_term: u64, committed: u64, ents: &[Entry]) -> Option<u64> {
+    pub(crate) fn maybe_append(
+        &mut self,
+        index: u64,
+        log_term: u64,
+        committed: u64,
+        ents: &[Entry],
+    ) -> Option<u64> {
         if self.match_term(index, log_term) {
             let last_new_i = index + ents.len() as u64;
             match self.find_conflict(ents) {
                 0 => {}
                 ci if ci <= self.committed => {
-                    panic!("entry {} conflict with committed entry [committed({})]", ci, self.committed);
+                    panic!(
+                        "entry {} conflict with committed entry [committed({})]",
+                        ci, self.committed
+                    );
                 }
                 ci => {
                     let offset = index + 1;
@@ -119,7 +129,10 @@ impl<T: Storage> RaftLog<T> {
         }
         let after = ents[0].get_Index() - 1;
         if after < self.committed {
-            panic!("after({}) is out of range [committed({})]", after, self.committed);
+            panic!(
+                "after({}) is out of range [committed({})]",
+                after, self.committed
+            );
         }
         self.unstable.truncate_and_append(ents);
         self.last_index()
@@ -182,14 +195,17 @@ impl<T: Storage> RaftLog<T> {
 
     // returns if there is pending snapshot waiting for applying
     pub(crate) fn has_pending_snapshot(&self) -> bool {
-        self.unstable.snapshot.is_some() && !is_empty_snapshot(&self.unstable.snapshot.as_ref().unwrap())
+        self.unstable.snapshot.is_some()
+            && !is_empty_snapshot(&self.unstable.snapshot.as_ref().unwrap())
     }
 
     pub(crate) fn snapshot(&self) -> Result<Snapshot, RaftLogError> {
         if let Some(snapshot) = &self.unstable.snapshot {
             return Ok(snapshot.clone());
         }
-        self.storage.snapshot().map_err(|err| RaftLogError::FromStorage(err))
+        self.storage
+            .snapshot()
+            .map_err(|err| RaftLogError::FromStorage(err))
     }
 
     pub fn first_index(&self) -> u64 {
@@ -205,7 +221,10 @@ impl<T: Storage> RaftLog<T> {
             index
         } else {
             // TODO(bdarnell)
-            self.storage.last_index().map_err(|err| unimplemented!("{}", err)).unwrap()
+            self.storage
+                .last_index()
+                .map_err(|err| unimplemented!("{}", err))
+                .unwrap()
         }
     }
 
@@ -280,7 +299,7 @@ impl<T: Storage> RaftLog<T> {
         match self.entries(self.first_index(), NO_LIMIT) {
             Ok(entries) => entries,
             Err(RaftLogError::FromStorage(StorageError::Compacted)) => self.all_entries(), // try again if there was a racing compact
-            Err(err) => panic!("{}", err),                                                 // TODO (xiangli): handle error?
+            Err(err) => panic!("{}", err), // TODO (xiangli): handle error?
         }
     }
 
@@ -318,14 +337,23 @@ impl<T: Storage> RaftLog<T> {
     }
 
     // [lo, hi)
-    pub(crate) fn slice(&self, lo: u64, hi: u64, max_size: u64) -> Result<Vec<Entry>, RaftLogError> {
-        self.must_check_out_of_bounds(lo, hi).map(|_| Vec::<Entry>::new())?;
+    pub(crate) fn slice(
+        &self,
+        lo: u64,
+        hi: u64,
+        max_size: u64,
+    ) -> Result<Vec<Entry>, RaftLogError> {
+        self.must_check_out_of_bounds(lo, hi)
+            .map(|_| Vec::<Entry>::new())?;
         if lo == hi {
             return Ok(vec![]);
         }
         let mut ents = Vec::new();
         if lo < self.unstable.offset {
-            match self.storage.entries(lo, hi.min(self.unstable.offset), max_size) {
+            match self
+                .storage
+                .entries(lo, hi.min(self.unstable.offset), max_size)
+            {
                 Ok(entries) => {
                     // check if ents has reached the size limitation
                     if (entries.len() as u64) < hi.min(self.unstable.offset) - lo {
@@ -336,7 +364,11 @@ impl<T: Storage> RaftLog<T> {
                 Err(StorageError::Compacted) => {
                     return Ok(vec![]);
                 }
-                Err(StorageError::Unavailable) => unimplemented!("entries[{}:{}] is unavailable from storage", lo, hi.min(self.unstable.offset)),
+                Err(StorageError::Unavailable) => unimplemented!(
+                    "entries[{}:{}] is unavailable from storage",
+                    lo,
+                    hi.min(self.unstable.offset)
+                ),
                 Err(err) => unimplemented!("{}", err),
             }
         }
@@ -360,7 +392,13 @@ impl<T: Storage> RaftLog<T> {
         let length = self.last_index() + 1 - fi;
         if hi > fi + length {
             // It is not same to etcd
-            panic!("slice[{}:{}] out of bound [{}:{}]", lo, hi, fi, self.last_index());
+            panic!(
+                "slice[{}:{}] out of bound [{}:{}]",
+                lo,
+                hi,
+                fi,
+                self.last_index()
+            );
         }
         Ok(())
     }
@@ -393,7 +431,9 @@ impl<T: Storage> RaftLog<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_empty_entry_set, new_entry, new_entry_set, new_log, new_log_with_storage, new_snapshot};
+    use crate::mock::{
+        new_empty_entry_set, new_entry, new_entry_set, new_log, new_log_with_storage, new_snapshot,
+    };
     use crate::raft::NO_LIMIT;
     use crate::storage::{MemoryStorage, SafeMemStorage, Storage, StorageError};
 
@@ -433,7 +473,10 @@ mod tests {
             (new_entry_set(vec![(2, 2), (3, 3)]), 0),
             (new_entry_set(vec![(3, 3)]), 0),
             // no conflict, but has new entries
-            (new_entry_set(vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]), 4),
+            (
+                new_entry_set(vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]),
+                4,
+            ),
             (new_entry_set(vec![(2, 2), (3, 3), (4, 4), (5, 4)]), 4),
             (new_entry_set(vec![(3, 3), (4, 4), (5, 5)]), 4),
             (new_entry_set(vec![(4, 4), (5, 5)]), 4),
@@ -486,9 +529,19 @@ mod tests {
             // (new_entry_set(vec![]), 2, new_entry_set(vec![(1, 1), (2, 2)]), 3),
             // (new_entry_set(vec![(3, 2)]), 3, new_entry_set(vec![(1, 1), (2, 2), (3, 2)]), 3),
             // conflicts with index 1
-            (new_entry_set(vec![(1, 2)]), 1, new_entry_set(vec![(1, 2)]), 1),
+            (
+                new_entry_set(vec![(1, 2)]),
+                1,
+                new_entry_set(vec![(1, 2)]),
+                1,
+            ),
             // conflicts with index 2
-            (new_entry_set(vec![(2, 3), (3, 3)]), 3, new_entry_set(vec![(1, 1), (2, 3), (3, 3)]), 2),
+            (
+                new_entry_set(vec![(2, 3), (3, 3)]),
+                3,
+                new_entry_set(vec![(1, 1), (2, 3), (3, 3)]),
+                2,
+            ),
         ];
 
         for (entries, w_index, w_ents, w_unstable) in tests {
@@ -576,8 +629,26 @@ mod tests {
                 last_index - 1,
                 false,
             ), // commit up to the commit in the message
-            (last_term, last_index, 0, new_empty_entry_set(), last_index, true, commit, false), // commit do not decrease
-            (0, 0, last_index, new_empty_entry_set(), 0, true, commit, false),                  // commit do not decrease
+            (
+                last_term,
+                last_index,
+                0,
+                new_empty_entry_set(),
+                last_index,
+                true,
+                commit,
+                false,
+            ), // commit do not decrease
+            (
+                0,
+                0,
+                last_index,
+                new_empty_entry_set(),
+                0,
+                true,
+                commit,
+                false,
+            ), // commit do not decrease
             (
                 last_term,
                 last_index,
@@ -665,7 +736,9 @@ mod tests {
             let mut raft_log = new_log();
             raft_log.append(&previous_ents);
             raft_log.committed = commit;
-            let catch: Result<Option<u64>, _> = panic::catch_unwind(AssertUnwindSafe(|| raft_log.maybe_append(index, log_term, committed, &entries)));
+            let catch: Result<Option<u64>, _> = panic::catch_unwind(AssertUnwindSafe(|| {
+                raft_log.maybe_append(index, log_term, committed, &entries)
+            }));
             assert_eq!(catch.is_err(), w_panic);
             if catch.is_err() {
                 continue;
@@ -678,7 +751,11 @@ mod tests {
 
             assert_eq!(raft_log.committed, w_commit);
             if catch.unwrap().is_some() && !entries.is_empty() {
-                let g_ents = raft_log.slice(raft_log.last_index() - entries.len() as u64 + 1, raft_log.last_index() + 1, NO_LIMIT);
+                let g_ents = raft_log.slice(
+                    raft_log.last_index() - entries.len() as u64 + 1,
+                    raft_log.last_index() + 1,
+                    NO_LIMIT,
+                );
                 assert!(g_ents.is_ok());
                 assert_eq!(entries, g_ents.unwrap());
             }
@@ -735,7 +812,9 @@ mod tests {
         assert_eq!(751, unstable_ents[0].get_Index());
 
         let prev = raft_log.last_index();
-        raft_log.append(new_entry_set(vec![(raft_log.last_index() + 1, raft_log.last_index() + 1)]).as_slice());
+        raft_log.append(
+            new_entry_set(vec![(raft_log.last_index() + 1, raft_log.last_index() + 1)]).as_slice(),
+        );
         assert_eq!(prev + 1, raft_log.last_index());
 
         let ents = raft_log.entries(raft_log.last_index(), NO_LIMIT);
@@ -781,15 +860,22 @@ mod tests {
         for (unstable, w_ents) in tests {
             // append stable entries to storage
             let storage = SafeMemStorage::new();
-            storage
-                .wl()
-                .append(previous_ents[..(unstable - 1)].iter().map(|entry| entry.clone()).collect());
+            storage.wl().append(
+                previous_ents[..(unstable - 1)]
+                    .iter()
+                    .map(|entry| entry.clone())
+                    .collect(),
+            );
 
             // append unstable entries to raft_log
             let mut raft_log = new_log_with_storage(storage);
             raft_log.append(&previous_ents[(unstable - 1)..]);
 
-            let ents: Vec<Entry> = raft_log.unstable_entries().iter().map(|entry| entry.clone()).collect();
+            let ents: Vec<Entry> = raft_log
+                .unstable_entries()
+                .iter()
+                .map(|entry| entry.clone())
+                .collect();
             if !ents.is_empty() {
                 let spot = ents.len() - 1;
                 raft_log.stable_to(ents[spot].get_Index(), ents[spot].get_Term());
@@ -856,12 +942,42 @@ mod tests {
             (snap_i + 1, snap_t + 1, new_empty_entry_set(), snap_i + 1),
             (snap_i, snap_t + 1, new_empty_entry_set(), snap_i + 1),
             (snap_i - 1, snap_t + 1, new_empty_entry_set(), snap_i + 1),
-            (snap_i + 1, snap_t, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 2),
-            (snap_i, snap_t, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 1),
-            (snap_i - 1, snap_t, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 1),
-            (snap_i + 1, snap_t + 1, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 1),
-            (snap_i, snap_t + 1, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 1),
-            (snap_i - 1, snap_t + 1, new_entry_set(vec![(snap_i + 1, snap_t)]), snap_i + 1),
+            (
+                snap_i + 1,
+                snap_t,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 2,
+            ),
+            (
+                snap_i,
+                snap_t,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 1,
+            ),
+            (
+                snap_i - 1,
+                snap_t,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 1,
+            ),
+            (
+                snap_i + 1,
+                snap_t + 1,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 1,
+            ),
+            (
+                snap_i,
+                snap_t + 1,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 1,
+            ),
+            (
+                snap_i - 1,
+                snap_t + 1,
+                new_entry_set(vec![(snap_i + 1, snap_t)]),
+                snap_i + 1,
+            ),
         ];
 
         for (stable_i, stable_t, new_ents, w_unstable) in tests {
@@ -896,7 +1012,8 @@ mod tests {
             raft_log.applied_to(raft_log.committed);
 
             for (i, compact) in compact.iter().enumerate() {
-                let catch = panic::catch_unwind(AssertUnwindSafe(|| storage.wl().compact(*compact)));
+                let catch =
+                    panic::catch_unwind(AssertUnwindSafe(|| storage.wl().compact(*compact)));
                 if catch.is_err() || catch.unwrap().is_err() {
                     assert!(!w_allow);
                     continue;
@@ -946,7 +1063,9 @@ mod tests {
         ];
 
         for (lo, hi, w_panic, w_err_compacted) in tests {
-            let catch = panic::catch_unwind(AssertUnwindSafe(|| raft_log.must_check_out_of_bounds(lo, hi)));
+            let catch = panic::catch_unwind(AssertUnwindSafe(|| {
+                raft_log.must_check_out_of_bounds(lo, hi)
+            }));
             if catch.is_err() {
                 assert!(w_panic);
                 continue;
@@ -1020,7 +1139,9 @@ mod tests {
         let storage = SafeMemStorage::new();
         storage.wl().apply_snapshot(new_snapshot(offset, 0));
         for i in 1..num / 2 {
-            storage.wl().append(new_entry_set(vec![(offset + i, offset + i)]));
+            storage
+                .wl()
+                .append(new_entry_set(vec![(offset + i, offset + i)]));
         }
         let mut raft_log = new_log_with_storage(storage.clone());
         for i in num / 2..num {
@@ -1029,7 +1150,13 @@ mod tests {
         // (from, to, limit, w, w_panic)
         let tests = vec![
             // test no limit
-            (offset - 1, offset + 1, NO_LIMIT, new_empty_entry_set(), false),
+            (
+                offset - 1,
+                offset + 1,
+                NO_LIMIT,
+                new_empty_entry_set(),
+                false,
+            ),
             (offset, offset + 1, NO_LIMIT, new_empty_entry_set(), false),
             (
                 half - 1,
@@ -1038,11 +1165,29 @@ mod tests {
                 new_entry_set(vec![(half - 1, half - 1), (half, half)]),
                 false,
             ),
-            (half, half + 1, NO_LIMIT, new_entry_set(vec![(half, half)]), false),
-            (last - 1, last, NO_LIMIT, new_entry_set(vec![(last - 1, last - 1)]), false),
+            (
+                half,
+                half + 1,
+                NO_LIMIT,
+                new_entry_set(vec![(half, half)]),
+                false,
+            ),
+            (
+                last - 1,
+                last,
+                NO_LIMIT,
+                new_entry_set(vec![(last - 1, last - 1)]),
+                false,
+            ),
             (last, last + 1, NO_LIMIT, new_empty_entry_set(), true),
             // test limit
-            (half - 1, half + 1, 0, new_entry_set(vec![(half - 1, half - 1)]), false),
+            (
+                half - 1,
+                half + 1,
+                0,
+                new_entry_set(vec![(half - 1, half - 1)]),
+                false,
+            ),
             (
                 half - 1,
                 half + 1,
@@ -1068,10 +1213,20 @@ mod tests {
                 half - 1,
                 half + 2,
                 half_e.compute_size() as u64 * 3,
-                new_entry_set(vec![(half - 1, half - 1), (half, half), (half + 1, half + 1)]),
+                new_entry_set(vec![
+                    (half - 1, half - 1),
+                    (half, half),
+                    (half + 1, half + 1),
+                ]),
                 false,
             ),
-            (half, half + 2, half_e.compute_size() as u64, new_entry_set(vec![(half, half)]), false),
+            (
+                half,
+                half + 2,
+                half_e.compute_size() as u64,
+                new_entry_set(vec![(half, half)]),
+                false,
+            ),
             (
                 half,
                 half + 2,

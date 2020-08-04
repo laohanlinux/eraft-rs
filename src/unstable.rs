@@ -18,7 +18,7 @@ use crate::raftpb::raft::{Entry, Snapshot};
 // Note that unstable.offset may be less than highest log
 // position in storage; this means that the next write to storage
 // might need to truncate the log before persisting unstable.entries.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Unstable {
     // the incoming unstable snapshot, if any.
     pub(crate) snapshot: Option<Snapshot>,

@@ -14,18 +14,21 @@
 
 use crate::conf_change::conf_change::Changer;
 use crate::conf_change::restore::restore;
-use crate::raft_log::{RaftLog, RaftLogError};
 use crate::node::SoftState;
 use crate::node::{is_empty_hard_state, is_empty_snapshot, Ready};
 use crate::quorum::quorum::VoteResult;
 use crate::quorum::quorum::VoteResult::{VoteLost, VoteWon};
 use crate::raft::ReadOnlyOption::{ReadOnlyLeaseBased, ReadOnlySafe};
+use crate::raft_log::{RaftLog, RaftLogError};
 use crate::raftpb::raft::EntryType::{EntryConfChange, EntryConfChangeV2, EntryNormal};
 use crate::raftpb::raft::MessageType::{
-    MsgApp, MsgAppResp, MsgBeat, MsgCheckQuorum, MsgHeartbeat, MsgHeartbeatResp, MsgHup, MsgPreVote, MsgPreVoteResp, MsgProp, MsgReadIndex,
-    MsgReadIndexResp, MsgSnap, MsgSnapStatus, MsgTimeoutNow, MsgTransferLeader, MsgUnreachable, MsgVote, MsgVoteResp,
+    MsgApp, MsgAppResp, MsgBeat, MsgCheckQuorum, MsgHeartbeat, MsgHeartbeatResp, MsgHup,
+    MsgPreVote, MsgPreVoteResp, MsgProp, MsgReadIndex, MsgReadIndexResp, MsgSnap, MsgSnapStatus,
+    MsgTimeoutNow, MsgTransferLeader, MsgUnreachable, MsgVote, MsgVoteResp,
 };
-use crate::raftpb::raft::{ConfChange, ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot};
+use crate::raftpb::raft::{
+    ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot,
+};
 use crate::raftpb::{entry_to_conf_changei, equivalent, ConfChangeI, ExtendConfChange};
 use crate::read_only::{ReadIndexStatus, ReadOnly, ReadState};
 use crate::storage::StorageError::SnapshotTemporarilyUnavailable;
@@ -134,7 +137,7 @@ pub const campaign_election: &'static str = "CampaignElection";
 /// campaign_transfer represents the type of leader transfer
 pub const campaign_transfer: &'static str = "CompaignTransfer";
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Clone, Debug, PartialEq)]
 pub enum RaftError {
     // ErrProposalDropped is returned when the proposal is ignored by some cases,
     // so that the proposer can be notified and fail fast.
@@ -269,7 +272,10 @@ impl<S: Storage + Clone> Config<S> {
         }
 
         if self.read_only_option == ReadOnlyOption::ReadOnlyLeaseBased && !self.check_quorum {
-            return Err("check_quorum must be enabled when ReadOnlyOption is ReadOnlyLeaseBased".to_string());
+            return Err(
+                "check_quorum must be enabled when ReadOnlyOption is ReadOnlyLeaseBased"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -284,6 +290,7 @@ pub struct Progress {
     pub next: u64,
 }
 
+#[derive(Clone)]
 pub struct Raft<S: Storage + Clone> {
     pub id: u64,
     pub term: u64,
@@ -355,8 +362,11 @@ pub struct Raft<S: Storage + Clone> {
     pub step: Option<Box<StepFn<S>>>,
 }
 
-type TickFn<S: Storage + Clone> = fn(raft: &mut Raft<S>);
-type StepFn<S: Storage + Clone> = fn(raft: &mut Raft<S>, m: Message) -> Result<(), RaftError>;
+pub(crate) type TickFn<S: Storage + Clone> = fn(raft: &mut Raft<S>);
+pub(crate) type StepFn<S: Storage + Clone> =
+    fn(raft: &mut Raft<S>, m: Message) -> Result<(), RaftError>;
+
+// pub(crate) type StepFn<S: Storage + Clone> = FnMut(&mut Raft<S>, Message) -> Result<(), RaftError>;
 
 // tick_election is run by followers and candidate after self.election_timeout
 fn tick_election<S: Storage + Clone>(raft: &mut Raft<S>) {
@@ -373,16 +383,23 @@ fn tick_election<S: Storage + Clone>(raft: &mut Raft<S>) {
 impl<S: Storage + Clone> Raft<S> {
     // TODO:
     pub fn new(mut config: Config<S>) -> Self {
-        assert!(config.validate().is_ok());
-        let mut raft_log = RaftLog::new_log_with_size(config.storage.clone(), config.max_committed_size_per_ready);
+        assert!(
+            config.validate().is_ok(),
+            "{}",
+            config.validate().unwrap_err()
+        );
+        let mut raft_log =
+            RaftLog::new_log_with_size(config.storage.clone(), config.max_committed_size_per_ready);
         let state_ret = config.storage.initial_state();
         assert!(state_ret.is_ok()); // TODO(bdarnell)
         let (mut hs, mut cs) = state_ret.unwrap();
         if !config.peers.is_empty() || !config.learners.is_empty() {
-            // TODO(bdarnell): the peers argument is always nil except in
-            // tests; the argument should be removed and these tests should be
-            // updated to specify their nodes through a snapshot.
-            panic!("cannot specify both new_raft(pees, learners) and ConfigState.(Voters, Learners)");
+            if !cs.voters.is_empty() || !cs.learners.is_empty() {
+                // TODO(bdarnell): the peers argument is always nil except in
+                // tests; the argument should be removed and these tests should be
+                // updated to specify their nodes through a snapshot.
+                panic!("cannot specify both new_raft(pees, learners) and ConfigState.(Voters, Learners)");
+            }
             cs.set_voters(config.peers.clone());
             cs.set_learners(config.learners.clone());
         }
@@ -403,19 +420,15 @@ impl<S: Storage + Clone> Raft<S> {
             lead_transferee: 0,
             pending_config_index: 0,
             uncommitted_size: 0,
-            read_only: ReadOnly {
-                option: ReadOnlyOption::ReadOnlySafe,
-                pending_read_index: Default::default(),
-                read_index_queue: vec![],
-            },
+            read_only: ReadOnly::new(config.read_only_option),
             election_elapsed: 0,
             heartbeat_elapsed: 0,
-            check_quorum: false,
-            pre_vote: false,
-            heartbeat_timeout: 0,
-            election_timeout: 0,
+            check_quorum: config.check_quorum,
+            pre_vote: config.pre_vote,
+            heartbeat_timeout: config.heartbeat_tick,
+            election_timeout: config.election_tick,
             randomized_election_timeout: 0,
-            disable_proposal_forwarding: false,
+            disable_proposal_forwarding: config.disable_proposal_forwarding,
             tick: None,
             step: None,
         };
@@ -426,7 +439,7 @@ impl<S: Storage + Clone> Raft<S> {
             },
             &cs,
         )
-            .unwrap();
+        .unwrap();
         let s_tc = raft.switch_to_config(cfg, prs);
         assert!(equivalent(&cs, &s_tc).is_ok());
 
@@ -439,7 +452,13 @@ impl<S: Storage + Clone> Raft<S> {
         }
 
         raft.become_follower(raft.term, NONE);
-        let nodes_str = raft.prs.voter_nodes().iter().map(|id| format!("{:#x}", id)).collect::<Vec<_>>().join(",");
+        let nodes_str = raft
+            .prs
+            .voter_nodes()
+            .iter()
+            .map(|id| format!("{:#x}", id))
+            .collect::<Vec<_>>()
+            .join(",");
         info!(
             "new_raft {:#x} [peers: [{}], term: {}, commit: {}, applied: {}, last_index: {}, last_term: {}]",
             raft.id,
@@ -478,7 +497,11 @@ impl<S: Storage + Clone> Raft<S> {
             m.set_from(self.id);
         }
         let msg_type = m.get_field_type();
-        if msg_type == MsgVote || msg_type == MsgVoteResp || msg_type == MsgPreVote || msg_type == MsgPreVoteResp {
+        if msg_type == MsgVote
+            || msg_type == MsgVoteResp
+            || msg_type == MsgPreVote
+            || msg_type == MsgPreVoteResp
+        {
             // All {pre-, }campaign messages need to have the term set when
             // sending.
             // - MsgVote: m.Term is the term the node is campaigning for,
@@ -491,10 +514,19 @@ impl<S: Storage + Clone> Raft<S> {
             // - MsgPreVoteResp: m.Term is the term received in th original
             //   MsgPreVote if the pre-vote was granted, non-zero for the
             //   same reasons MsgPreVote is
-            assert_ne!(m.get_term(), 0, "term should be set when sending {:?}", m.get_field_type());
+            assert_ne!(
+                m.get_term(),
+                0,
+                "term should be set when sending {:?}",
+                m.get_field_type()
+            );
         } else {
             if m.get_term() != 0 {
-                panic!("term should not be set when sending {:?} (was {})", m.get_field_type(), m.get_term());
+                panic!(
+                    "term should not be set when sending {:?} (was {})",
+                    m.get_field_type(),
+                    m.get_term()
+                );
             }
             // do not attach term to MsgProp, MsgReadIndex
             // proposals are a way to forward to the leader and
@@ -536,7 +568,10 @@ impl<S: Storage + Clone> Raft<S> {
         if term.is_err() || ents.is_err() {
             // send snapshot if we failed to get term or entries
             if !pr.recent_active {
-                debug!("ignore sending snapshot to {:#x} since it is not recently active", to);
+                debug!(
+                    "ignore sending snapshot to {:#x} since it is not recently active",
+                    to
+                );
                 return false;
             }
 
@@ -559,9 +594,16 @@ impl<S: Storage + Clone> Raft<S> {
                         pr
                     );
                     pr.become_snapshot(s_index);
-                    debug!("{:#x} paused sending replication messages to {:#x} [{}]", self.id, to, pr);
+                    debug!(
+                        "{:#x} paused sending replication messages to {:#x} [{}]",
+                        self.id, to, pr
+                    );
                 }
-                Err(e) if e == RaftLogError::FromStorage(StorageError::SnapshotTemporarilyUnavailable) => {
+                Err(e)
+                    if e == RaftLogError::FromStorage(
+                        StorageError::SnapshotTemporarilyUnavailable,
+                    ) =>
+                {
                     debug!(
                         "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
                         self.id, to
@@ -590,7 +632,10 @@ impl<S: Storage + Clone> Raft<S> {
                     state::StateType::Probe => {
                         pr.probe_sent = true;
                     }
-                    s_ => panic!("{:#x} is sending append in unhandled state {}", self.id, pr.state),
+                    s_ => panic!(
+                        "{:#x} is sending append in unhandled state {}",
+                        self.id, pr.state
+                    ),
                 }
             }
         }
@@ -606,7 +651,13 @@ impl<S: Storage + Clone> Raft<S> {
         // or it might not have all the committed entries.
         // The leader MUST NOT forward the follower's commit to
         // an unmatched index.
-        let commit = self.prs.progress.get(&to).unwrap()._match.min(self.raft_log.committed);
+        let commit = self
+            .prs
+            .progress
+            .get(&to)
+            .unwrap()
+            ._match
+            .min(self.raft_log.committed);
         let mut m = Message::new();
         m.set_to(to);
         m.set_field_type(MsgHeartbeat);
@@ -640,7 +691,11 @@ impl<S: Storage + Clone> Raft<S> {
 
     fn bcast_heartbeat_with_ctx(&mut self, ctx: Option<Vec<u8>>) {
         let nodes = self.prs.voter_nodes();
-        for id in nodes.iter().filter(|id| **id != self.id).collect::<Vec<_>>() {
+        for id in nodes
+            .iter()
+            .filter(|id| **id != self.id)
+            .collect::<Vec<_>>()
+        {
             self.send_heartbeat(*id, ctx.clone());
         }
     }
@@ -668,9 +723,15 @@ impl<S: Storage + Clone> Raft<S> {
                 let mut ent = Entry::new();
                 ent.set_Type(EntryConfChangeV2);
                 // There's no way in which this proposal should be able to be rejected.
-                assert!(self.append_entry(&mut [ent]), "refused un-refusable auto-leaving ConfChangeV2");
+                assert!(
+                    self.append_entry(&mut [ent]),
+                    "refused un-refusable auto-leaving ConfChangeV2"
+                );
                 self.pending_config_index = self.raft_log.last_index();
-                info!("initiating automatic transition out of joint configuration {:?}", self.prs.config);
+                info!(
+                    "initiating automatic transition out of joint configuration {:?}",
+                    self.prs.config
+                );
             }
         }
 
@@ -679,7 +740,8 @@ impl<S: Storage + Clone> Raft<S> {
             self.raft_log.stable_to(e.get_Index(), e.get_Term());
         }
         if !is_empty_snapshot(&rd.snapshot) {
-            self.raft_log.stable_snap_to(rd.snapshot.get_metadata().get_index());
+            self.raft_log
+                .stable_snap_to(rd.snapshot.get_metadata().get_index());
         }
     }
 
@@ -733,7 +795,11 @@ impl<S: Storage + Clone> Raft<S> {
 
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        self.prs.progress.get_mut(&self.id).unwrap().maybe_update(li);
+        self.prs
+            .progress
+            .get_mut(&self.id)
+            .unwrap()
+            .maybe_update(li);
         // regardless of maybe_commit's return, our caller will call bcast_append.
         self.maybe_commit();
         true
@@ -764,7 +830,11 @@ impl<S: Storage + Clone> Raft<S> {
 
     // become_candidate transform this peer's state to candidate
     fn become_candidate(&mut self) {
-        assert_ne!(self.state, StateType::Leader, "invalid transition [leader -> candidate]");
+        assert_ne!(
+            self.state,
+            StateType::Leader,
+            "invalid transition [leader -> candidate]"
+        );
         self.step = Some(Box::new(Self::step_candidate));
         self.reset(self.term + 1);
         self.tick = Some(Box::new(tick_election));
@@ -774,7 +844,11 @@ impl<S: Storage + Clone> Raft<S> {
     }
 
     fn become_precandidate(&mut self) {
-        assert_ne!(self.state, StateType::Leader, "invalid transition [leader->pre-candidate]");
+        assert_ne!(
+            self.state,
+            StateType::Leader,
+            "invalid transition [leader->pre-candidate]"
+        );
 
         // becoming a pre-candidate changes our step functions and state,
         // but doesn't change anything else. In particular it doesn't increase
@@ -789,7 +863,11 @@ impl<S: Storage + Clone> Raft<S> {
 
     // become_leader transform this peer's state to leader
     fn become_leader(&mut self) {
-        assert_ne!(self.state, StateType::Follower, "invalid transition [follower->leader]");
+        assert_ne!(
+            self.state,
+            StateType::Follower,
+            "invalid transition [follower->leader]"
+        );
         self.step = Some(Box::new(Self::step_leader));
         self.reset(self.term);
         self.tick = Some(Box::new(tick_election));
@@ -799,7 +877,11 @@ impl<S: Storage + Clone> Raft<S> {
         // (perhaps after having received a snapshot as a result). The leader is
         // trivially in this state. Note that r.reset() has initialized this
         // progress with the last index already.
-        self.prs.progress.get_mut(&self.id).unwrap().become_replicate();
+        self.prs
+            .progress
+            .get_mut(&self.id)
+            .unwrap()
+            .become_replicate();
 
         // conservatively set the pending_config_index to the last index in the
         // log. There may or may not be a pending config change. but it's
@@ -810,7 +892,10 @@ impl<S: Storage + Clone> Raft<S> {
 
         let empty_ent = Entry::new();
         // This won't happen because we just called reset() above.
-        assert!(self.append_entry(&mut [empty_ent.clone()]), "empty entry was dropped");
+        assert!(
+            self.append_entry(&mut [empty_ent.clone()]),
+            "empty entry was dropped"
+        );
         // As a special case, don't count the initial empty entry towards the
         // uncommitted log quota. The is because we want to preseve the
         // behavior of allowing the one entry larger than quota if the current
@@ -829,8 +914,16 @@ impl<S: Storage + Clone> Raft<S> {
             return;
         }
 
-        let ents = self.raft_log.slice(self.raft_log.applied + 1, self.raft_log.committed + 1, NO_LIMIT);
-        assert!(ents.is_ok(), "unexpected error getting unapplied entries ({})", ents.unwrap_err());
+        let ents = self.raft_log.slice(
+            self.raft_log.applied + 1,
+            self.raft_log.committed + 1,
+            NO_LIMIT,
+        );
+        assert!(
+            ents.is_ok(),
+            "unexpected error getting unapplied entries ({})",
+            ents.unwrap_err()
+        );
         let n = Self::num_of_pending_conf(ents.unwrap().as_slice());
         if n != 0 && self.raft_log.committed > self.raft_log.applied {
             warn!(
@@ -840,7 +933,10 @@ impl<S: Storage + Clone> Raft<S> {
             return;
         }
 
-        info!("{:#x} is starting a new election at term {}", self.id, self.term);
+        info!(
+            "{:#x} is starting a new election at term {}",
+            self.id, self.term
+        );
         self.campaign(t);
     }
 
@@ -850,7 +946,10 @@ impl<S: Storage + Clone> Raft<S> {
         if !self.promotable() {
             // This path should not be hit (callers are supposed to check), but
             // better safe than sorry.
-            warn!("{:#x} is unprootable; campaign() should have been called", self.id);
+            warn!(
+                "{:#x} is unprootable; campaign() should have been called",
+                self.id
+            );
         }
         let mut term = 0;
         let mut vote_msg = MessageType::MsgHup;
@@ -912,9 +1011,15 @@ impl<S: Storage + Clone> Raft<S> {
 
     fn poll(&mut self, id: u64, t: MessageType, v: bool) -> (usize, usize, VoteResult) {
         if v {
-            info!("{:#x} received {:?} from {:#x} at term {}", self.id, t, id, self.term);
+            info!(
+                "{:#x} received {:?} from {:#x} at term {}",
+                self.id, t, id, self.term
+            );
         } else {
-            info!("{:#x} received {:?} rejection from {:#x} at term {}", self.id, t, id, self.term);
+            info!(
+                "{:#x} received {:?} rejection from {:#x} at term {}",
+                self.id, t, id, self.term
+            );
         }
         self.prs.record_vote(id, v); // vote for itself.
         self.prs.tally_votes()
@@ -929,8 +1034,11 @@ impl<S: Storage + Clone> Raft<S> {
             }
             term if term > self.term => {
                 if m.get_field_type() == MsgVote || m.get_field_type() == MsgPreVote {
-                    let force = CampaignType::from(m.get_context()) == CampaignType::CampaignTransfer;
-                    let in_lease = self.check_quorum && self.lead != NONE && self.election_elapsed < self.election_timeout;
+                    let force =
+                        CampaignType::from(m.get_context()) == CampaignType::CampaignTransfer;
+                    let in_lease = self.check_quorum
+                        && self.lead != NONE
+                        && self.election_elapsed < self.election_timeout;
                     if !force && in_lease {
                         // If a server receives a RequestVote request within the minimum election timeout
                         // of hearing from a current leader, it doesn't update its term or grant its vote
@@ -967,7 +1075,9 @@ impl<S: Storage + Clone> Raft<S> {
                 }
             }
             term if term < self.term => {
-                if (self.check_quorum || self.pre_vote) && (m.get_field_type() == MsgHeartbeat || m.get_field_type() == MsgApp) {
+                if (self.check_quorum || self.pre_vote)
+                    && (m.get_field_type() == MsgHeartbeat || m.get_field_type() == MsgApp)
+                {
                     // We have received messages from a leader at a lower term. It is possible
                     // that these messages were simply delayed in the network, but this could
                     // also mean that this node has advanced its term number during a network
@@ -1125,10 +1235,12 @@ impl<S: Storage + Clone> Raft<S> {
             return;
         }
 
-        if let Some(m_last_index) = self
-            .raft_log
-            .maybe_append(m.get_index(), m.get_logTerm(), m.get_commit(), m.get_entries())
-        {
+        if let Some(m_last_index) = self.raft_log.maybe_append(
+            m.get_index(),
+            m.get_logTerm(),
+            m.get_commit(),
+            m.get_entries(),
+        ) {
             let mut msg = Message::default();
             msg.set_to(m.get_from());
             msg.set_field_type(MsgAppResp);
@@ -1166,7 +1278,10 @@ impl<S: Storage + Clone> Raft<S> {
 
     // handles Snapshot RPC request, only invoked by Follower or Candidate
     fn handle_snapshot(&mut self, m: Message) {
-        let (sindex, sterm) = (m.get_snapshot().get_metadata().get_index(), m.get_snapshot().get_metadata().get_term());
+        let (sindex, sterm) = (
+            m.get_snapshot().get_metadata().get_index(),
+            m.get_snapshot().get_metadata().get_term(),
+        );
         if self.restore(m.get_snapshot()) {
             info!(
                 "{:#x} [commit: {}] restored snapshot [index: {}, term: {}]",
@@ -1206,7 +1321,10 @@ impl<S: Storage + Clone> Raft<S> {
             //
             // At the time of writing, the instance is guaranteed to be in follower
             // state when this method is called.
-            warn!("{:x} attempted to restore snapshot as leader; should never happen", self.id);
+            warn!(
+                "{:x} attempted to restore snapshot as leader; should never happen",
+                self.id
+            );
             self.become_follower(self.term + 1, NONE);
             return false;
         }
@@ -1216,7 +1334,10 @@ impl<S: Storage + Clone> Raft<S> {
         // code here and there assumes that r.id is in the progress tracker.
         let mut found = false;
         let mut cs = s.get_metadata().get_conf_state();
-        let found = vec![cs.voters.clone(), cs.learners.clone()].iter().flatten().any(|id| *id == self.id);
+        let found = vec![cs.voters.clone(), cs.learners.clone()]
+            .iter()
+            .flatten()
+            .any(|id| *id == self.id);
         if !found {
             warn!(
                 "{:#x} attempted to restore snapshot but it is not in the ConfState {:?}; should never happen",
@@ -1226,7 +1347,10 @@ impl<S: Storage + Clone> Raft<S> {
         }
 
         // Now go ahead and actually restore.
-        if self.raft_log.match_term(s.get_metadata().get_index(), s.get_metadata().get_term()) {
+        if self
+            .raft_log
+            .match_term(s.get_metadata().get_index(), s.get_metadata().get_term())
+        {
             info!(
                 "{:#x} [commit: {}, lastindex: {}, lastterm: {}] fast-forwarded commit to snapshot [index: {}, term: {}]",
                 self.id,
@@ -1251,10 +1375,10 @@ impl<S: Storage + Clone> Raft<S> {
             },
             cs,
         )
-            // This should never happen. Either there's a bug in our config change
-            // handling or the client corrupted the conf change.
-            .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
-            .unwrap();
+        // This should never happen. Either there's a bug in our config change
+        // handling or the client corrupted the conf change.
+        .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
+        .unwrap();
         equivalent(cs, &self.switch_to_config(cfg, prs));
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded
@@ -1419,8 +1543,13 @@ impl<S: Storage + Clone> Raft<S> {
     // Empty payloads are never refused. This is used both for appending an empty
     // entry at a new leader's term, as well as leaving a joint configuration.
     fn increase_uncommitted_size(&mut self, ents: &[Entry]) -> bool {
-        let s = ents.iter().fold(0, |acc, entry| acc + entry.get_Data().len() as u64);
-        if self.uncommitted_size > 0 && s > 0 && self.uncommitted_size + s > self.max_uncommitted_size {
+        let s = ents
+            .iter()
+            .fold(0, |acc, entry| acc + entry.get_Data().len() as u64);
+        if self.uncommitted_size > 0
+            && s > 0
+            && self.uncommitted_size + s > self.max_uncommitted_size
+        {
             // If the uncommitted tail of the Raft log is empty, allow any size
             // proposal. Otherwise, limit the size of the uncommitted tail of the
             // log and drop any proposal that would push the size over the limit.
@@ -1441,7 +1570,9 @@ impl<S: Storage + Clone> Raft<S> {
             // Fast-path for followers, who do not track or enforce the limit.
             return;
         }
-        let s = ents.iter().fold(0, |acc, entry| acc + entry.get_Data().len());
+        let s = ents
+            .iter()
+            .fold(0, |acc, entry| acc + entry.get_Data().len());
         if s as u64 > self.uncommitted_size {
             self.uncommitted_size = 0;
         } else {
@@ -1457,7 +1588,8 @@ impl<S: Storage + Clone> Raft<S> {
     }
 
     fn reset_randomized_election_timeout(&mut self) {
-        self.randomized_election_timeout = self.election_timeout + thread_rng().gen_range(0, self.election_timeout);
+        self.randomized_election_timeout =
+            self.election_timeout + thread_rng().gen_range(0, self.election_timeout);
     }
 
     fn send_timeout_now(&mut self, to: u64) {
@@ -1498,7 +1630,10 @@ impl<S: Storage + Clone> Raft<S> {
                     pr.recent_active = true;
                 }
                 if !self.prs.quorum_active() {
-                    warn!("{:#x} stepped down to follower since quorum is not active", self.id);
+                    warn!(
+                        "{:#x} stepped down to follower since quorum is not active",
+                        self.id
+                    );
                     self.become_follower(self.term, NONE);
                 }
                 // Mark everyone (but ourselves) as inactive in preparation for the next
@@ -1512,7 +1647,11 @@ impl<S: Storage + Clone> Raft<S> {
                 return Ok(());
             }
             MsgProp => {
-                assert!(!m.entries.is_empty(), "{:#x} stepped empty MsgProp", self.id);
+                assert!(
+                    !m.entries.is_empty(),
+                    "{:#x} stepped empty MsgProp",
+                    self.id
+                );
                 if self.prs.progress.get(&self.id).is_none() {
                     // If we are not currently a member of the range (i.e. this node
                     // was removed from the configuration while serving as leader).
@@ -1547,7 +1686,10 @@ impl<S: Storage + Clone> Raft<S> {
                         }
 
                         if !refused.is_empty() {
-                            info!("{:#x} ignoring conf change {} at config {:?}: {}", self.id, v2, self.prs.config, refused);
+                            info!(
+                                "{:#x} ignoring conf change {} at config {:?}: {}",
+                                self.id, v2, self.prs.config, refused
+                            );
                             *entry = Entry::new();
                             entry.set_Type(EntryNormal);
                         } else {
@@ -1581,10 +1723,16 @@ impl<S: Storage + Clone> Raft<S> {
                 // We can express this in terms of the term and index instead of a user-supplied value.
                 // This would allow multiple reads to piggyback on the same message.
                 if self.read_only.option == ReadOnlySafe {
-                    self.read_only.add_request(self.raft_log.committed, m.clone());
+                    self.read_only
+                        .add_request(self.raft_log.committed, m.clone());
                     // The local node automatically acks the request.
-                    self.read_only.recv_ack(self.id, m.get_entries().first().unwrap().get_Data().to_vec());
-                    self.bcast_heartbeat_with_ctx(Some(m.get_entries().first().unwrap().get_Data().to_vec()));
+                    self.read_only.recv_ack(
+                        self.id,
+                        m.get_entries().first().unwrap().get_Data().to_vec(),
+                    );
+                    self.bcast_heartbeat_with_ctx(Some(
+                        m.get_entries().first().unwrap().get_Data().to_vec(),
+                    ));
                 } else if self.read_only.option == ReadOnlyLeaseBased {
                     let resp = self.response_to_read_index_req(&m, self.raft_log.committed);
                     if resp.get_to() != NONE {
@@ -1599,7 +1747,11 @@ impl<S: Storage + Clone> Raft<S> {
         // All other message types require a progress for m.From (pr).
         let pr = self.prs.progress.get_mut(&m.get_from());
         if pr.is_none() {
-            info!("{:#x} no progress available for {:#x}", self.id, m.get_from());
+            info!(
+                "{:#x} no progress available for {:#x}",
+                self.id,
+                m.get_from()
+            );
             return Ok(());
         }
         match typ {
@@ -1623,7 +1775,10 @@ impl<S: Storage + Clone> Raft<S> {
         let typ = m.get_field_type();
         match typ {
             MsgProp => {
-                info!("{:#x} no leader at term {}, dropping proposal", self.id, self.term);
+                info!(
+                    "{:#x} no leader at term {}, dropping proposal",
+                    self.id, self.term
+                );
                 return Err(RaftError::ProposalDropped);
             }
             MsgApp => {
@@ -1640,7 +1795,10 @@ impl<S: Storage + Clone> Raft<S> {
             }
             MsgPreVoteResp | MsgVoteResp => {
                 let (gr, rj, res) = self.poll(m.get_from(), my_vote_resp_type, !m.get_reject());
-                info!("{:#x} has received {} {:?} votes and {} vote rejections", self.id, gr, typ, rj);
+                info!(
+                    "{:#x} has received {} {:?} votes and {} vote rejections",
+                    self.id, gr, typ, rj
+                );
                 if res == VoteWon {
                     if self.state == StateType::PreCandidate {
                         self.campaign(CampaignType::CampaignElection);
@@ -1673,7 +1831,10 @@ impl<S: Storage + Clone> Raft<S> {
         match typ {
             MsgProp => {
                 if self.lead == NONE {
-                    info!("{:#x} no leader at term {}; dropping proposal", self.id, self.term);
+                    info!(
+                        "{:#x} no leader at term {}; dropping proposal",
+                        self.id, self.term
+                    );
                     return Err(RaftError::ProposalDropped);
                 } else if self.disable_proposal_forwarding {
                     info!(
@@ -1703,7 +1864,10 @@ impl<S: Storage + Clone> Raft<S> {
             }
             MsgTransferLeader => {
                 if self.lead == NONE {
-                    info!("{:#x} no leader at term {}; dropping leader transfer msg", self.id, self.term);
+                    info!(
+                        "{:#x} no leader at term {}; dropping leader transfer msg",
+                        self.id, self.term
+                    );
                     return Ok(());
                 }
                 let mut msg = m.clone();
@@ -1721,7 +1885,10 @@ impl<S: Storage + Clone> Raft<S> {
             }
             MsgReadIndex => {
                 if self.lead == NONE {
-                    info!("{:#x} no leader at term {}; dropping index reading msg", self.id, self.term);
+                    info!(
+                        "{:#x} no leader at term {}; dropping index reading msg",
+                        self.id, self.term
+                    );
                     return Ok(());
                 }
                 let mut msg = m.clone();
@@ -1761,7 +1928,12 @@ impl<S: Storage + Clone> Raft<S> {
             );
             let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
             if pr.maybe_decr_to(m.get_index(), m.get_rejectHint()) {
-                info!("{:#x} decreased progress of {:#x} to [{}]", self.id, m.get_from(), pr);
+                info!(
+                    "{:#x} decreased progress of {:#x} to [{}]",
+                    self.id,
+                    m.get_from(),
+                    pr
+                );
                 if pr.state == ProgressStateType::Replicate {
                     pr.become_probe();
                 }
@@ -1822,7 +1994,11 @@ impl<S: Storage + Clone> Raft<S> {
         //
         // // Transfer leadership is in progress.
         if m.get_from() == self.lead_transferee && _match == self.raft_log.last_index() {
-            info!("{:#x} sent MsgTimeoutNow to {:#x} after received MsgAppResp", self.id, m.get_from());
+            info!(
+                "{:#x} sent MsgTimeoutNow to {:#x} after received MsgAppResp",
+                self.id,
+                m.get_from()
+            );
             self.send_timeout_now(m.get_from());
         }
         Ok(())
@@ -1842,12 +2018,11 @@ impl<S: Storage + Clone> Raft<S> {
         if self.read_only.option != ReadOnlySafe || m.get_context().is_empty() {
             return Ok(());
         }
-        if self
-            .prs
-            .config
-            .voters
-            .vote_result(self.read_only.recv_ack(m.get_from(), m.get_context().to_vec()).unwrap())
-            != VoteWon
+        if self.prs.config.voters.vote_result(
+            self.read_only
+                .recv_ack(m.get_from(), m.get_context().to_vec())
+                .unwrap(),
+        ) != VoteWon
         {
             return Ok(());
         }
@@ -1924,7 +2099,10 @@ impl<S: Storage + Clone> Raft<S> {
             );
         }
         if lead_transferee == self.id {
-            info!("{:x} is already leader. Ignored transferring leadership to self", self.id);
+            info!(
+                "{:x} is already leader. Ignored transferring leadership to self",
+                self.id
+            );
             return Ok(());
         }
         // Transfer leadership to third party.

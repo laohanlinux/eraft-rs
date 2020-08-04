@@ -33,7 +33,7 @@ pub fn new_log() -> RaftLog<SafeMemStorage> {
     RaftLog::new(new_memory())
 }
 
-pub fn new_log_with_storage<T: Storage>(storage: T) -> RaftLog<T> {
+pub fn new_log_with_storage<T: Storage + Clone>(storage: T) -> RaftLog<T> {
     RaftLog::new(storage)
 }
 
