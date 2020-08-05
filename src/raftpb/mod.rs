@@ -1,7 +1,9 @@
 use crate::raftpb::raft::ConfChangeTransition::{
     ConfChangeTransitionAuto, ConfChangeTransitionJointExplicit, ConfChangeTransitionJointImplicit,
 };
-use crate::raftpb::raft::ConfChangeType::{ConfChangeAddLearnerNode, ConfChangeAddNode, ConfChangeRemoveNode, ConfChangeUpdateNode};
+use crate::raftpb::raft::ConfChangeType::{
+    ConfChangeAddLearnerNode, ConfChangeAddNode, ConfChangeRemoveNode, ConfChangeUpdateNode,
+};
 use crate::raftpb::raft::EntryType::{EntryConfChange, EntryConfChangeV2};
 use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeV2, ConfState, Entry};
 use bytes::{Buf, Bytes};
@@ -23,12 +25,20 @@ pub fn equivalent(cs1: &ConfState, cs2: &ConfState) -> Result<(), String> {
     cs1.learners.sort();
     cs1.voters_outgoing.sort();
     cs1.learners_next.sort();
+    if !cs1.get_auto_leave() {
+        cs1.set_auto_leave(false);
+    }
 
     cs2.voters.sort();
     cs2.learners.sort();
     cs2.voters_outgoing.sort();
     cs2.learners_next.sort();
+    if !cs2.get_auto_leave() {
+        cs2.set_auto_leave(false);
+    }
+
     if cs1 != cs2 {
+        info!("cs1: {:?}\ncs2:{:?}", cs1, cs2);
         return Err(format!(
             "ConfStates not equivalent after sorting:{:?}\n{:?}\nInputs were:\n{:?}\n{:?}",
             cs1, cs2, orig1, orig2
@@ -164,9 +174,16 @@ pub fn entry_to_conf_changei(entry: &Entry) -> Option<Box<dyn ConfChangeI>> {
 // - un: update n.
 pub fn conf_changes_from_string(s: &str) -> Result<Vec<ConfChangeSingle>, String> {
     let mut ccs = Vec::<ConfChangeSingle>::new();
-    for tok in &mut s.split_ascii_whitespace().map(|s| s.chars()).collect::<Vec<_>>() {
+    for tok in &mut s
+        .split_ascii_whitespace()
+        .map(|s| s.chars())
+        .collect::<Vec<_>>()
+    {
         if tok.count() < 2 {
-            return Err(format!("unknown token {}", tok.into_iter().collect::<String>()));
+            return Err(format!(
+                "unknown token {}",
+                tok.into_iter().collect::<String>()
+            ));
         }
         let mut cc = ConfChangeSingle::new();
         match tok.nth(0).unwrap() {
@@ -174,7 +191,12 @@ pub fn conf_changes_from_string(s: &str) -> Result<Vec<ConfChangeSingle>, String
             'l' => cc.set_field_type(ConfChangeAddLearnerNode),
             'r' => cc.set_field_type(ConfChangeRemoveNode),
             'u' => cc.set_field_type(ConfChangeUpdateNode),
-            _ => return Err(format!("unknown token {}", tok.into_iter().collect::<String>())),
+            _ => {
+                return Err(format!(
+                    "unknown token {}",
+                    tok.into_iter().collect::<String>()
+                ))
+            }
         }
         let id = tok.skip(0).into_iter().collect::<String>();
         cc.set_node_id(id.parse().unwrap());

@@ -45,7 +45,7 @@ pub struct BaseStatus {
     lead_transferee: u64,
 }
 
-impl<S: Storage + Clone> From<&Raft<S>> for BaseStatus {
+impl<S: Storage> From<&Raft<S>> for BaseStatus {
     fn from(raft: &Raft<S>) -> Self {
         BaseStatus {
             id: raft.id,
@@ -57,7 +57,7 @@ impl<S: Storage + Clone> From<&Raft<S>> for BaseStatus {
     }
 }
 
-impl<S: Storage + Clone> From<&Raft<S>> for Status {
+impl<S: Storage> From<&Raft<S>> for Status {
     fn from(raft: &Raft<S>) -> Self {
         let mut s = Status {
             base_status: BaseStatus::from(raft),

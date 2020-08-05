@@ -11,11 +11,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+use crate::node::{is_empty_hard_state, is_empty_snapshot, Peer, Ready, SnapshotStatus, SoftState};
+use crate::raft::{Config, Raft, StateType, NONE};
 use crate::raft_log::{RaftLog, RaftLogError};
-use crate::node::{is_empty_hard_state, is_empty_snapshot, Ready, SnapshotStatus, SoftState};
-use crate::raft::{Config, Raft, StateType};
+use crate::raftpb::raft::ConfChangeType::{ConfChangeAddNode, ConfChangeRemoveNode};
+use crate::raftpb::raft::EntryType::EntryConfChange;
 use crate::raftpb::raft::MessageType::{MsgReadIndex, MsgSnapStatus, MsgUnreachable};
-use crate::raftpb::raft::{ConfChange, ConfState, Entry, EntryType, HardState, Message, MessageType};
+use crate::raftpb::raft::{
+    ConfChange, ConfState, Entry, EntryType, HardState, Message, MessageType,
+};
 use crate::raftpb::ConfChangeI;
 use crate::status::{BaseStatus, Status};
 use crate::storage::Storage;
@@ -29,6 +33,7 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::marker::PhantomData;
 use std::net::Shutdown::Read;
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -44,16 +49,44 @@ pub enum RawRaftError {
     StepUnknown(String),
 }
 
+#[derive(Clone)]
+pub struct SafeRawNode<S: Storage + Send> {
+    pub(crate) core_node: Arc<RwLock<RawCoreNode<S>>>,
+}
+
+impl<S: Storage + Send> SafeRawNode<S> {
+    pub fn new(code_node: RawCoreNode<S>) -> Self {
+        SafeRawNode {
+            core_node: Arc::new(RwLock::new(code_node)),
+        }
+    }
+    pub fn new2(conf: Config, storage: S) -> Self {
+        Self::new(RawCoreNode::new(conf, storage))
+    }
+
+    pub fn rl(&self) -> RwLockReadGuard<'_, RawCoreNode<S>> {
+        self.core_node.read().unwrap()
+    }
+
+    pub fn wl(&self) -> RwLockWriteGuard<'_, RawCoreNode<S>> {
+        self.core_node.write().unwrap()
+    }
+}
+
 // RawNode is a thread-unsafe Node.
 // The methods of this struct corresponds to the methods of Node and are described
 // more fully there.
-pub struct RawNode<S: Storage + Clone> {
-    pub(crate) raft: Raft<S>,
+// #[derive(Clone)]
+pub struct RawCoreNode<S: Storage> {
+    pub raft: Raft<S>,
     prev_soft_st: Option<SoftState>,
     prev_hard_st: HardState,
 }
 
-impl<S: Storage + Clone> RawNode<S> {
+trait AssertSend: Send {}
+impl<T: Storage + Send> AssertSend for Raft<T> {}
+
+impl<S: Storage> RawCoreNode<S> {
     /// NewRawNode instance a RawNode from the given configuration.
     ///
     /// See Bootstrap() for bootstrapping an initial state; this replaces the follower
@@ -61,20 +94,64 @@ impl<S: Storage + Clone> RawNode<S> {
     /// recommended that instead of calling Bootstrap. application bootstrap their
     /// state manually by setting up a Storage that has a first index > 1 and which
     /// stores the described ConfState as its InitialState.
-    pub fn new(config: Config<S>) -> RawNode<S> {
-        let mut raft = Raft::new(config);
+    pub fn new(config: Config, storage: S) -> RawCoreNode<S> {
+        let mut raft = Raft::new(config, storage);
         let prev_soft_st = raft.soft_state();
         let prev_hard_st = raft.hard_state();
-        RawNode {
+        RawCoreNode {
             raft,
             prev_soft_st: Some(prev_soft_st),
             prev_hard_st,
         }
     }
 
+    pub fn boot_strap(&mut self, peers: Vec<Peer>) -> Result<(), String> {
+        if peers.is_empty() {
+            return Err("must provide at least one peer to Bootstrap".to_string());
+        }
+        let last_index = self
+            .raft
+            .raft_log
+            .storage
+            .last_index()
+            .map_err(|err| format!("{:?}", err))?;
+        if last_index != 0 {
+            return Err("can't bootstrap a nonempty storage".to_string());
+        }
+
+        self.prev_hard_st = HardState::new();
+        self.raft.become_follower(1, NONE);
+        let mut ents = Vec::with_capacity(peers.len());
+        for (i, peer) in peers.iter().enumerate() {
+            let mut cc = ConfChange::new();
+            cc.set_field_type(ConfChangeAddNode);
+            cc.set_node_id(peer.id);
+            cc.set_context(Bytes::from(peer.context.clone()));
+            let data = cc.write_to_bytes().map_err(|err| format!("{}", err))?;
+
+            let mut entry = Entry::new();
+            entry.set_Type(EntryConfChange);
+            entry.set_Term(1);
+            entry.set_Index((i + 1) as u64);
+            entry.set_Data(Bytes::from(data));
+            ents.push(entry);
+        }
+
+        self.raft.raft_log.append(&ents);
+        self.raft.raft_log.committed = ents.len() as u64;
+        for peer in &peers {
+            let mut cc = ConfChange::new();
+            cc.set_node_id(peer.id);
+            cc.set_field_type(ConfChangeAddNode);
+            let mut v2 = cc.as_v2();
+            self.raft.apply_conf_change(&mut v2);
+        }
+        return Ok(());
+    }
+
     /// Tick advances the interval logical clock by a single tick.
     pub fn tick(&mut self) {
-        self.raft.tick();
+        self.raft.tick_election();
     }
 
     /// TickQuiesced advances the internal logical clock by a single tick without
@@ -133,8 +210,13 @@ impl<S: Storage + Clone> RawNode<S> {
         if is_local_message(m.get_field_type()) {
             return Err(RawRaftError::StepLocalMsg);
         }
-        if self.raft.prs.progress.contains_key(&m.get_from()) || !is_response_message(m.get_field_type()) {
-            return self.raft.step(m).map_err(|err| RawRaftError::StepUnknown(err.to_string()));
+        if self.raft.prs.progress.contains_key(&m.get_from())
+            || !is_response_message(m.get_field_type())
+        {
+            return self
+                .raft
+                .step(m)
+                .map_err(|err| RawRaftError::StepUnknown(err.to_string()));
         }
         Err(RawRaftError::StepPeerNotFound)
     }
@@ -152,13 +234,18 @@ impl<S: Storage + Clone> RawNode<S> {
     // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
     // is no obligation that the Ready must be handled.
     pub(crate) fn ready_without_accept(&self) -> Ready {
-        Ready::new(&self.raft, self.prev_soft_st.clone(), self.prev_hard_st.clone())
+        Ready::new(
+            &self.raft,
+            self.prev_soft_st.clone(),
+            self.prev_hard_st.clone(),
+        )
     }
 
     // acceptReady is called when the consumer of the RawNode has decided to go
     // ahead and handle a Ready. Nothing must alter the state of the RawNode between
     // this call and the prior call to Ready().
-    fn accept_ready(&mut self, ready: &Ready) {
+    pub(crate) fn accept_ready(&mut self, ready: &Ready) {
+        debug!("accept ready, {:?}", ready);
         if ready.soft_state.is_some() {
             self.prev_soft_st = ready.soft_state.clone();
         }
@@ -171,7 +258,10 @@ impl<S: Storage + Clone> RawNode<S> {
     /// HasReady called when RawNode user need to check if any Ready pending.
     /// Checking logic in this method should be consistent with Ready.containsUpdates().
     pub fn has_ready(&self) -> bool {
-        if self.prev_soft_st.map_or_else(|| false, |soft_state| soft_state != self.raft.soft_state()) {
+        if self
+            .prev_soft_st
+            .map_or_else(|| false, |soft_state| soft_state != self.raft.soft_state())
+        {
             return true;
         }
 
@@ -184,7 +274,10 @@ impl<S: Storage + Clone> RawNode<S> {
             return true;
         }
 
-        if !self.raft.msgs.is_empty() || !self.raft.raft_log.unstable_entries().is_empty() || self.raft.raft_log.has_next_entries() {
+        if !self.raft.msgs.is_empty()
+            || !self.raft.raft_log.unstable_entries().is_empty()
+            || self.raft.raft_log.has_next_entries()
+        {
             return true;
         }
 

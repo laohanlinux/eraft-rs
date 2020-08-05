@@ -114,7 +114,11 @@ impl Clone for ProgressTracker {
         let mut to = ProgressTracker::new(self.max_inflight);
         to.config = self.config.clone();
         let mut progress_inner = HashMap::new();
-        progress_inner.extend(self.progress.iter().map(|(key, value)| (*key, value.clone())));
+        progress_inner.extend(
+            self.progress
+                .iter()
+                .map(|(key, value)| (*key, value.clone())),
+        );
         to.progress = ProgressMap::new(progress_inner);
         to.votes = self.votes.clone();
         to
@@ -137,8 +141,20 @@ impl ProgressTracker {
         let mut conf_state = ConfState::new();
         conf_state.set_voters(self.config.voters.incoming.as_slice());
         conf_state.set_voters_outgoing(self.config.voters.outgoing.as_slice());
-        conf_state.set_learners(self.config.learners.iter().map(|learner| *learner).collect());
-        conf_state.set_learners_next(self.config.learners_next.iter().map(|learner| *learner).collect());
+        conf_state.set_learners(
+            self.config
+                .learners
+                .iter()
+                .map(|learner| *learner)
+                .collect(),
+        );
+        conf_state.set_learners_next(
+            self.config
+                .learners_next
+                .iter()
+                .map(|learner| *learner)
+                .collect(),
+        );
         conf_state.set_auto_leave(self.config.auto_leave);
         conf_state
     }
@@ -152,7 +168,9 @@ impl ProgressTracker {
     // committed returns the largest log index known to be committed based on what
     // the voting members of the group have acknowledged.
     pub fn committed(&mut self) -> u64 {
-        self.config.voters.committed(&MatchAckIndexer::from(&self.progress))
+        self.config
+            .voters
+            .committed(&MatchAckIndexer::from(&self.progress))
     }
 
     // visit invokes the supplied closure for all tracked progresses in stable order.
@@ -242,7 +260,9 @@ impl ProgressTracker {
                 None => {}
             }
         }
-        (granted, rejected, self.config.voters.vote_result(&self.votes))
+        let res = self.config.voters.vote_result(&self.votes);
+        info!("grant: {}, rejected: {}, res: {:?}", granted, rejected, res);
+        (granted, rejected, res)
     }
 }
 

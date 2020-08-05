@@ -14,30 +14,39 @@
 
 use crate::conf_change::conf_change::Changer;
 use crate::conf_change::restore::restore;
-use crate::raft_log::RaftLog;
 use crate::raft::{self, Config, Raft, RaftError, StateType, NONE};
-use crate::raftpb::raft::MessageType::{MsgHup, MsgProp, MsgReadIndex, MsgSnapStatus, MsgTransferLeader, MsgUnreachable};
-use crate::raftpb::raft::{ConfChange, ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot};
+use crate::raft_log::RaftLog;
+use crate::raftpb::raft::MessageType::{
+    MsgHup, MsgProp, MsgReadIndex, MsgSnapStatus, MsgTransferLeader, MsgUnreachable,
+};
+use crate::raftpb::raft::{
+    ConfChange, ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot,
+};
 use crate::raftpb::{equivalent, ConfChangeI};
-use crate::rawnode::RawNode;
+use crate::rawnode::{RawCoreNode, SafeRawNode};
 use crate::read_only::{ReadOnly, ReadState};
 use crate::status::Status;
 use crate::storage::{SafeMemStorage, Storage};
 use crate::tracker::ProgressTracker;
+use crate::util::{is_local_message, is_response_message};
+use async_channel::{self, bounded, unbounded, Receiver, Sender};
+use async_io::Timer;
 use async_trait::async_trait;
 use bytes::Bytes;
+use env_logger::init_from_env;
+use futures::future::err;
 use futures::TryFutureExt;
 use protobuf::{ProtobufEnum, RepeatedField};
+use smol::Task;
+use std::default::Default;
 use std::error::Error;
+use std::os::macos::raw::stat;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::select;
-use crate::util::is_local_message;
-use async_channel::{self, unbounded, Receiver, Sender};
-use futures::future::err;
-use std::sync::Arc;
 use tokio::task;
+use tokio::time::Duration;
 
-type SafeDynError = Box<Error + Send + Sync + 'static>;
-type SafeResult<T: Send + Sync> = Result<T, Box<Error + Send + Sync + 'static>>;
+type SafeResult<T: Send + Sync + Clone> = Result<T, RaftError>;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum SnapshotStatus {
@@ -69,7 +78,7 @@ impl PartialEq for SoftState {
 /// encapsulates the entries and messages that are ready to read,
 /// be saved to stable storage, committed or sent to other peers.
 /// All fields in Ready are read-only.
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct Ready {
     /// The current volatile state of a Node.
     /// `SoftState` will be nil if there is no update.
@@ -111,7 +120,11 @@ pub struct Ready {
 }
 
 impl Ready {
-    pub fn new<S: Storage + Clone>(raft: &Raft<S>, prev_soft_st: Option<SoftState>, prev_hard_st: HardState) -> Ready {
+    pub fn new<S: Storage>(
+        raft: &Raft<S>,
+        prev_soft_st: Option<SoftState>,
+        prev_hard_st: HardState,
+    ) -> Ready {
         let mut ready = Ready {
             soft_state: prev_soft_st.clone(),
             hard_state: prev_hard_st.clone(),
@@ -162,7 +175,7 @@ impl Ready {
 
 /// represents a node in a raft cluster.
 #[async_trait]
-pub trait Node: Sync {
+pub trait Node: Send {
     /// Increments the interval logical clock for the `Node` by a single tick. Election
     /// timeouts and heartbeat timeouts are in units of ticks.
     async fn tick(&mut self);
@@ -255,27 +268,28 @@ fn is_hard_state_equal(a: &HardState, b: &HardState) -> bool {
     a.get_term() == b.get_term() && a.get_vote() == b.get_vote() && a.get_commit() == b.get_commit()
 }
 
-// returns true if the given HardState is empty.
+/// returns true if the given HardState is empty.
 pub fn is_empty_hard_state(st: &HardState) -> bool {
     let empty = HardState::new();
     is_hard_state_equal(&empty, st)
 }
 
-// returns true if the given snapshot is empty.
-pub(crate) fn is_empty_snapshot(sp: &Snapshot) -> bool {
+/// returns true if the given snapshot is empty.
+pub fn is_empty_snapshot(sp: &Snapshot) -> bool {
     sp.get_metadata().get_index() == 0
 }
 
+#[derive(Clone)]
 pub(crate) struct MsgWithResult {
     m: Option<Message>,
-    result: InnerChan<SafeResult<()>>,
+    result: Option<InnerChan<SafeResult<()>>>,
 }
 
 impl Default for MsgWithResult {
     fn default() -> Self {
         MsgWithResult {
             m: None,
-            result: InnerChan::default(),
+            result: None,
         }
     }
 }
@@ -284,14 +298,14 @@ impl MsgWithResult {
     pub fn new() -> Self {
         MsgWithResult {
             m: None,
-            result: InnerChan::new(),
+            result: None,
         }
     }
 
     pub fn new_with_channel(tx: Sender<SafeResult<()>>, rx: Receiver<SafeResult<()>>) -> Self {
         MsgWithResult {
             m: None,
-            result: InnerChan::new_with_channel(tx, rx),
+            result: Some(InnerChan::new_with_channel(tx, rx)),
         }
     }
 }
@@ -302,48 +316,83 @@ pub struct InnerChan<T> {
     tx: Option<Sender<T>>,
 }
 
-struct InnerChan2<T> {
-    tx: Option<async_channel::Sender<T>>,
-    rx: Option<async_channel::Receiver<T>>,
-}
-
 impl<T> Default for InnerChan<T> {
     fn default() -> Self {
         let (tx, rx) = unbounded();
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
 }
 
 impl<T> InnerChan<T> {
     pub fn new() -> InnerChan<T> {
         let (tx, rx) = unbounded();
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
+
+    pub fn new_with_cap(n: usize) -> InnerChan<T> {
+        let (tx, rx) = bounded(n);
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
+    }
+
     pub fn new_with_channel(tx: Sender<T>, rx: Receiver<T>) -> InnerChan<T> {
-        InnerChan { tx: Some(tx), rx: Some(rx) }
+        InnerChan {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
 
     pub fn tx(&self) -> Sender<T> {
         self.tx.as_ref().unwrap().clone()
     }
+
     pub fn tx_ref(&self) -> &Sender<T> {
         self.tx.as_ref().unwrap()
     }
+
     pub fn rx(&self) -> Receiver<T> {
         self.rx.as_ref().unwrap().clone()
     }
+
     pub fn rx_ref(&self) -> &Receiver<T> {
         self.rx.as_ref().unwrap()
     }
 }
 
 pub struct Peer {
-    id: u64,
-    context: Vec<u8>,
+    pub id: u64,
+    pub context: Vec<u8>,
 }
 
-pub(crate) struct InnerNode<S: Storage + Send + Sync + Clone> {
-    pub(crate) propo_c: InnerChan<MsgWithResult>,
+pub(crate) async fn start_node<S: Storage + Send + Sync + Clone + 'static>(
+    c: Config,
+    peers: Vec<Peer>,
+    storage: S,
+) -> InnerNode<S> {
+    assert!(!peers.is_empty(), "no peers given; use RestartNode instead");
+    let mut raw_node = RawCoreNode::new(c, storage);
+    raw_node.boot_strap(peers);
+
+    let mut node = InnerNode::new(SafeRawNode::new(raw_node));
+    let mut node1 = node.clone();
+    smol::Task::spawn(async move {
+        node1.run().await;
+    })
+    .detach();
+    node
+}
+
+#[derive(Clone)]
+pub(crate) struct InnerNode<S: Storage + Send> {
+    pub(crate) prop_c: InnerChan<MsgWithResult>,
     pub(crate) recv_c: InnerChan<Message>,
     conf_c: InnerChan<ConfChangeV2>,
     conf_state_c: InnerChan<ConfState>,
@@ -353,13 +402,17 @@ pub(crate) struct InnerNode<S: Storage + Send + Sync + Clone> {
     done: InnerChan<()>,
     stop: InnerChan<()>,
     status: InnerChan<Sender<Status>>,
-    raw_node: Option<RawNode<S>>,
+    raw_node: SafeRawNode<S>,
 }
 
-impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
-    pub fn new_node() -> InnerNode<S> {
+trait AssertSend: Send + Sync {}
+
+impl<T: Send + Sync + Storage> AssertSend for InnerNode<T> {}
+
+impl<S: Storage + Send> InnerNode<S> {
+    fn new(raw_node: SafeRawNode<S>) -> Self {
         InnerNode {
-            propo_c: InnerChan::default(),
+            prop_c: InnerChan::default(),
             recv_c: InnerChan::default(),
             conf_c: InnerChan::default(),
             conf_state_c: InnerChan::default(),
@@ -369,71 +422,109 @@ impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
             done: InnerChan::default(),
             stop: InnerChan::default(),
             status: InnerChan::default(),
-            raw_node: None,
+            raw_node,
         }
     }
 
-    async fn run(&self) {
-        let mut prop_rx: Option<Receiver<MsgWithResult>> = Some(self.propo_c.rx());
-        let mut readyc: Option<Sender<Ready>> = None;
-        let mut advance: Option<Receiver<()>> = None;
-        let mut rd: Option<Ready> = None;
-        let raw_node = self.raw_node.as_ref().unwrap();
-        let mut lead = NONE;
-        // while true {
-        //     if advance.is_some() {
-        //         readyc = None;
-        //     } else if raw_node.has_ready() {
-        //         // Populate a Ready. Note that this Ready is not guaranteed to
-        //         // actually be handled. We will arm readyc, but there's no guarantee
-        //         // that we will actually send on it. It's possible that we will
-        //         // service another channel instead, loop around, and then populate
-        //         // the Ready again. We could instead force the previous Ready to be
-        //         // handled first, but it's generally good to emit larger Readys plus
-        //         // it simplifies testing (by emitting less frequently and more
-        //         // predictably).
-        //         rd = Some(raw_node.ready_without_accept());
-        //         readyc = Some(self.ready_c.tx());
-        //     }
-        //     if lead != raw_node.raft.lead {
-        //         if raw_node.raft.has_leader() {
-        //             if lead == NONE {
-        //                 info!(
-        //                     "raft.node: {:#} elected leader {:#} at term {}",
-        //                     raw_node.raft.id, raw_node.raft.lead, raw_node.raft.term
-        //                 );
-        //                 // propo_c = Some(self.propo_c.rx());
-        //             }
-        //         } else {
-        //             info!(
-        //                 "raft.node: {:#x} lost leader {:#x} at term {}",
-        //                 raw_node.raft.id, lead, raw_node.raft.term
-        //             );
-        //             // propc.take();
-        //         }
-        //         lead = raw_node.raft.lead;
-        //     }
-        //
-        //     let prop_rx = prop_rx.as_ref().unwrap();
-        //     let recv_rx = self.recv_c.rx();
-        //     let conf_rx = self.conf_c.rx();
-        //     let tick_rx = self.tick_c.rx();
-        //     let state_rx = self.status.rx();
-        //     let stop_rx = self.stop.rx();
-        //     let advance_rx = advance.
-        //     // TODO: maybe buffer the config propose if there exists one (the way
-        //     // described in raft dissertation)
-        //     // Currently it is dropped in Step silently.
-        //     // select! {
-        //     //     pm = prop_rx.recv() => {}
-        //     //     m = recv_rx.recv() => {}
-        //     //     cc = conf_rx.recv() => {}
-        //     //     _ = tick_rx.recv() => {}
-        //     //     _ = rd.recv() => {}
-        //     //     _ = advance
-        //     // }
-        //     break;
-        // }
+    async fn run(&mut self) {
+        let mut wait_advance = false;
+        let mut ready = Ready::default();
+        let mut first = true;
+        loop {
+            {
+                let mut has_ready = false;
+                {
+                    if !wait_advance && self.rl_raw_node().has_ready() && !first {
+                        ready = self.rl_raw_node().ready_without_accept();
+                        has_ready = true;
+                    }
+                }
+                if has_ready {
+                    self.ready_c.tx_ref().send(ready.clone()).await.unwrap();
+                    self.wl_raw_node().accept_ready(&ready);
+                    wait_advance = true;
+                }
+                // Shit
+                first = false;
+            }
+
+            select! {
+                    conf = self.conf_c.rx_ref().recv() => {
+                        let cc: ConfChangeV2 = conf.unwrap();
+                        // If the node was removed, block incoming proposals. Note that we
+                        // only do this if the node was in the config before. Nodes may be
+                        // a member of the group without knowing this (when they're catching
+                        // up on the log and don't have the latest config) and we don't want
+                        // to block the proposal channel in that case.
+                        //
+                        // NB: propc is reset when the leader changes, which, if we learn
+                        // about it, sort of implies that we got readded, maybe? This isn't
+                        // very sound and likely has bugs.
+                        let mut cs = ConfState::new();
+                        {
+                             let mut raw_node = self.wl_raw_node();
+                             let ok_before = raw_node.raft.prs.progress.contains_key(&raw_node.raft.id);
+                              cs = raw_node.apply_conf_change(cc);
+                             let (ok_after, id) = (raw_node.raft.prs.progress.contains_key(&raw_node.raft.id), raw_node.raft.id);
+                             if ok_before && !ok_after {
+                                   let _id = raw_node.raft.id;
+                                   let found = cs.get_voters().iter().any(|id| *id == _id) || cs.get_voters_outgoing().iter().any(|id| *id == _id);
+                                   if !found {
+                                       warn!("Current node({:#x}) isn't voter", id);
+                                   }
+                             }
+                        }
+
+                        select! {
+                            _ = self.conf_state_c.tx_ref().send(cs) => {}
+                            _ = self.done.rx_ref().recv() => {}
+                        }
+                    }
+                    pm = self.prop_c.rx_ref().recv() => {
+                        let pm: MsgWithResult = pm.unwrap();
+                        if !self.is_voter() {
+                            pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NotIsVoter)).await;
+                        }else if !self.rl_raw_node().raft.has_leader() {
+                           pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NoLeader)).await;
+                        }else {
+                              let mut msg: Message = pm.m.as_ref().unwrap().clone();
+                              msg.set_from(self.rl_raw_node().raft.id);
+                              let res = self.step(msg).await;
+                              if let Some(result) =  pm.result {
+                                  result.tx_ref().send(res).await.unwrap();
+                              }
+                        }
+                    }
+                    msg = self.recv_c.rx_ref().recv() => {
+                        let msg: Message = msg.unwrap();
+                        // filter out response message from unknown From.
+                        let mut raw_node = self.wl_raw_node();
+                        let is_pr = raw_node.raft.prs.progress.contains_key(&msg.get_from());
+                        if is_pr || !is_response_message(msg.get_field_type()) {
+                           raw_node.raft.step(msg);
+                        }
+                    }
+                    _ = self.tick_c.rx_ref().recv() => {
+                        self.tick().await;
+                    }
+                    _ = self.advance.rx_ref().recv() => {
+                        {
+                            self.wl_raw_node().advance(&ready);
+                            wait_advance = false;
+                        }
+                    }
+                    status = self.status.rx_ref().recv() => {
+                        let _status = self.get_status();
+                        status.unwrap().send(_status).await;
+                    }
+                    _ = self.stop.rx_ref().recv() => {
+                        if let Some(rx) = self.done.rx.take() {
+                            self.done.tx_ref().send(()).await;
+                        }
+                        return;
+                    }
+            }
+        }
     }
 
     async fn do_step(&self, m: Message) -> SafeResult<()> {
@@ -449,55 +540,92 @@ impl<S: Storage + Send + Sync + Clone> InnerNode<S> {
             select! {
                 _ = self.recv_c.tx.as_ref().unwrap().send(m.clone()) => return Ok(()),
                 _ = self.done.rx.as_ref().unwrap().recv() => {
-                    return Err(Box::new(RaftError::Stopped));
+                    return Err(RaftError::Stopped);
                 }
             }
         }
-        let ch = self.propo_c.tx();
+        let ch = self.prop_c.tx();
         let mut pm = MsgWithResult::new();
         pm.m = Some(m);
         if wait {
-            pm.result = InnerChan::new();
+            pm.result = Some(InnerChan::new());
         }
-        let rx = pm.result.rx();
 
         select! {
-            _ = ch.send(pm) => {
+            _ = ch.send(pm.clone()) => {
                 if !wait {
                     return Ok(());
                 }
             }
             _ = self.done.rx.as_ref().unwrap().recv() => {
-                return Err(Box::new(RaftError::Stopped));
+                return Err(RaftError::Stopped);
             }
         }
+        let rx = pm.result.as_ref().unwrap().rx();
 
         // wait result
         select! {
             res = rx.recv() => return res.unwrap(),
-            _ = self.done.rx_ref().recv() => return Err(Box::new(RaftError::Stopped))
+            _ = self.done.rx_ref().recv() => return Err(RaftError::Stopped)
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
+    pub fn get_status(&self) -> Status {
+        Status::from(&self.raw_node.rl().raft)
+    }
+
+    pub fn rl_raw_node_fn<F>(&self, mut f: F)
+    where
+        F: FnMut(RwLockReadGuard<'_, RawCoreNode<S>>),
+    {
+        let rl = self.rl_raw_node();
+        f(rl)
+    }
+
+    pub fn wl_raw_node_fn<F>(&self, mut f: F)
+    where
+        F: FnMut(RwLockWriteGuard<'_, RawCoreNode<S>>),
+    {
+        let wl = self.wl_raw_node();
+        f(wl)
+    }
+
+    pub fn rl_raw_node(&self) -> RwLockReadGuard<'_, RawCoreNode<S>> {
+        self.raw_node.rl()
+    }
+
+    pub fn wl_raw_node(&self) -> RwLockWriteGuard<'_, RawCoreNode<S>> {
+        self.raw_node.wl()
+    }
+
+    fn is_voter(&self) -> bool {
+        let raw_node = self.rl_raw_node();
+        let _id = raw_node.raft.id;
+        let cs = raw_node.raft.prs.config_state();
+        cs.get_voters().iter().any(|id| *id == _id)
+            || cs.get_voters_outgoing().iter().any(|id| *id == _id)
+    }
+
+    fn is_voter_with_conf_state(&self, cs: &ConfState) -> bool {
+        let raw_node = self.rl_raw_node();
+        let _id = raw_node.raft.id;
+        cs.get_voters().iter().any(|id| *id == _id)
+            || cs.get_voters_outgoing().iter().any(|id| *id == _id)
+    }
+
+    // }
+    //
+    // #[async_trait]
+    // impl<S: Storage + Send> Node for InnerNode<S> {
     async fn tick(&mut self) {
-        let mut tick = self.tick_c.tx.as_mut().unwrap();
-        let mut done = self.done.rx.as_mut().unwrap();
-        let id = self.raw_node.as_ref().unwrap().raft.id;
-        select! {
-             _ = tick.send(()) => {}
-             _ = done.recv() => {}
-             else => {warn!("{:#x} A tick missed to fire. Node blocks too long", id)}
-        }
+        self.raw_node.wl().tick()
     }
 
     async fn campaign(&self) -> SafeResult<()> {
         let mut msg = Message::new();
         msg.set_field_type(MsgHup);
-        self.step(msg).await
+        self.do_step(msg).await
     }
 
     fn propose(&self, data: &[u8]) -> SafeResult<()> {
@@ -506,7 +634,7 @@ impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
         let mut entry = Entry::new();
         entry.set_Data(Bytes::from(data.to_vec()));
         msg.set_entries(RepeatedField::from(vec![entry]));
-        smol::block_on(async { self.step(msg).await })
+        smol::block_on(async { self.step_wait(msg).await })
     }
 
     fn propose_conf_change(&self, cc: impl ConfChangeI) -> SafeResult<()> {
@@ -518,7 +646,7 @@ impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
     }
 
     async fn step(&self, m: Message) -> SafeResult<()> {
-        // ignore unexpected local messages receiving over network
+        //    ignore unexpected local messages receiving over network
         if is_local_message(m.get_field_type()) {
             return Ok(());
         }
@@ -618,15 +746,15 @@ impl<S: Storage + Send + Sync + Clone> Node for InnerNode<S> {
         let stop = self.stop.tx();
         select! {
             _ = stop.send(()) => {},
-            _ = done.recv() => {}
+            _ = done.recv() => return
         }
         // Block until the stop has been acknowledged by run()
         done.recv().await;
     }
 }
 
-// MustSync returns true if the hard state and count of Raft entries indicate
-// that a synchronous write to persistent storage is required.
+/// MustSync returns true if the hard state and count of Raft entries indicate
+/// that a synchronous write to persistent storage is required.
 pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
     // Persistent state on all servers:
     // (Updated on stable storage before responding to RPCs)
@@ -640,19 +768,44 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 mod tests {
     use super::*;
     use crate::node::{InnerChan, InnerNode, Node};
+    use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::MsgProp;
     use crate::raftpb::raft::{Message, MessageType};
     use crate::storage::SafeMemStorage;
     use crate::util::is_local_message;
+    use lazy_static::lazy_static;
+    use nom::error::append_error;
     use protobuf::ProtobufEnum;
+    use smol::Task;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::Duration;
+    lazy_static! {
+    /// This is an example for using doc comment attributes
+    static ref msgs: Arc < Mutex < Vec <Message > > > = Arc::new(Mutex::new(vec ! []));
+    }
 
+    #[test]
+    fn t_drop() {
+        smol::block_on(async move {
+            let mut ch: InnerChan<usize> = InnerChan::new();
+            let rx = ch.rx.take();
+            drop(rx);
+            let tx = ch.tx();
+            let res = tx.send(19).await;
+            assert!(res.is_err());
+        });
+    }
+
+    // ensures that node.step sends msgProp to propc chan
+    // and other kinds of messages to recvc chan.
     #[test]
     fn t_node_step() {
         flexi_logger::Logger::with_env().start();
         smol::block_on(async {
             for msgn in 0..MessageType::MsgPreVoteResp.value() {
-                let mut node: InnerNode<SafeMemStorage> = InnerNode::new_node();
-                node.propo_c = InnerChan::new();
+                let mut node: InnerNode<SafeMemStorage> =
+                    InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
+                node.prop_c = InnerChan::new();
                 node.recv_c = InnerChan::new();
                 let msgt = MessageType::from_i32(msgn).unwrap();
                 let mut msg = Message::new();
@@ -660,17 +813,162 @@ mod tests {
                 node.step(msg).await;
                 // Proposal goes to proc chan. Others go to recvc chan.
                 if msgt == MsgProp {
-                    let proposal_rx = node.propo_c.rx();
-                    assert!(proposal_rx.try_recv().is_ok(), "{}: cannot receive {:?} on propc chan", msgn, msgt);
+                    let proposal_rx = node.prop_c.rx();
+                    assert!(
+                        proposal_rx.try_recv().is_ok(),
+                        "{}: cannot receive {:?} on propc chan",
+                        msgn,
+                        msgt
+                    );
                 } else {
                     let recv = node.recv_c.rx();
                     if is_local_message(msgt) {
-                        assert!(recv.try_recv().is_err(), "{}: step should ignore {:?}", msgn, msgt);
+                        assert!(
+                            recv.try_recv().is_err(),
+                            "{}: step should ignore {:?}",
+                            msgn,
+                            msgt
+                        );
                     } else {
-                        assert!(recv.try_recv().is_ok(), "{}: cannot receive {:?} on recvc chan", msgn, msgt);
+                        assert!(
+                            recv.try_recv().is_ok(),
+                            "{}: cannot receive {:?} on recvc chan",
+                            msgn,
+                            msgt
+                        );
                     }
                 }
             }
         });
+    }
+
+    // TODO
+    // cancal and stop should unblock step()
+    #[test]
+    fn t_node_step_unblock() {}
+
+    fn append_step(raft: &mut Raft<SafeMemStorage>, m: Message) -> Result<(), RaftError> {
+        msgs.lock().unwrap().push(m);
+        Ok(())
+    }
+
+    // ensure that node.Propose sends the given proposal to the underlying raft.
+    #[test]
+    fn t_node_process() {
+        flexi_logger::Logger::with_env().start();
+        smol::run(async {
+            {
+                msgs.lock().unwrap().clear();
+            }
+            let s = SafeMemStorage::new();
+            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+            let mut node1 = node.clone();
+            Task::spawn(async move { node1.run().await }).detach();
+            if let Err(err) = node.campaign().await {
+                panic!(err);
+            }
+            loop {
+                let ready_rx = node.ready();
+                let rd = ready_rx.recv().await.unwrap();
+                s.wl().append(rd.entries.clone());
+                // change the step function to append_step until this raft becomes leader.
+                // info!("{:?}", rd);
+                if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
+                    node.advance();
+                    break;
+                }
+                node.advance();
+            }
+
+            assert!(node.propose("somedata".as_bytes()).is_ok());
+            node.stop().await;
+            info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
+        });
+    }
+
+    #[test]
+    fn t_node_read_index() {
+        flexi_logger::Logger::with_env().start();
+        smol::run(async {
+            let s = SafeMemStorage::new();
+            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+            let wrs = vec![ReadState {
+                index: 1,
+                request_ctx: "somedata".as_bytes().to_vec(),
+            }];
+            {
+                node.wl_raw_node().raft.read_states = wrs.clone();
+            }
+            let mut node1 = node.clone();
+
+            Task::spawn(async move { node1.run().await }).detach();
+            if let Err(err) = node.campaign().await {
+                panic!(err);
+            }
+            loop {
+                let ready = node.ready_c.rx();
+                let ready = ready.recv().await.unwrap();
+                {
+                    let mut raw_node = node.wl_raw_node();
+                    let expect = ready.read_states.clone();
+                    assert_eq!(expect, wrs);
+                    s.wl().append(ready.entries);
+                    if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
+                        node.advance().await;
+                        break;
+                    }
+                }
+
+                node.advance().await;
+            }
+
+            let w_request = "somedata2".as_bytes().to_vec();
+            node.read_index(w_request.clone()).await;
+            node.stop();
+        });
+    }
+
+    #[test]
+    fn lock() {
+        let lock = Arc::new(RwLock::new(1));
+
+        {
+            let n = lock.write().unwrap();
+            let ll = lock.clone();
+            ll.write().unwrap();
+        }
+
+        // assert!(lock.try_write().is_err());
+    }
+
+    fn new_test_raw_node(
+        id: u64,
+        peers: Vec<u64>,
+        election_tick: u64,
+        heartbeat_tick: u64,
+        s: SafeMemStorage,
+    ) -> SafeRawNode<SafeMemStorage> {
+        SafeRawNode::new2(new_test_conf(id, peers, election_tick, heartbeat_tick), s)
+    }
+
+    fn new_test_conf(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tick: u64) -> Config {
+        Config {
+            id,
+            peers,
+            learners: vec![],
+            election_tick,
+            heartbeat_tick,
+            applied: 0,
+            max_size_per_msg: NO_LIMIT,
+            max_committed_size_per_ready: 0,
+            max_uncommitted_entries_size: 0,
+            max_inflight_msgs: 1 << 8,
+            check_quorum: false,
+            pre_vote: false,
+            read_only_option: ReadOnlyOption::ReadOnlySafe,
+            disable_proposal_forwarding: false,
+        }
     }
 }

@@ -18,7 +18,7 @@ use protobuf::Message;
 use bytes::{BytesMut, BufMut, Buf, Bytes};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Clone, Debug, PartialEq)]
 pub enum StorageError {
     // ErrCompacted is returned by Storage.Entries/Compact when a requested
     // index is unavailable because it predates the last snapshot.
@@ -69,6 +69,7 @@ pub trait Storage {
 
 // Memory implements the Storage interface backed by an
 // in-memory array.
+#[derive(Clone)]
 pub struct MemoryStorage {
     // Protects access to all fields. Most methods of MemoryStorage are
     // run on the raft goroutine, but Append() is run on an application
