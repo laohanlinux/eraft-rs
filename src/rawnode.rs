@@ -50,11 +50,11 @@ pub enum RawRaftError {
 }
 
 #[derive(Clone)]
-pub struct SafeRawNode<S: Storage + Send> {
+pub struct SafeRawNode<S: Storage> {
     pub(crate) core_node: Arc<RwLock<RawCoreNode<S>>>,
 }
 
-impl<S: Storage + Send> SafeRawNode<S> {
+impl<S: Storage> SafeRawNode<S> {
     pub fn new(code_node: RawCoreNode<S>) -> Self {
         SafeRawNode {
             core_node: Arc::new(RwLock::new(code_node)),
