@@ -31,13 +31,12 @@ use crate::tracker::ProgressTracker;
 use crate::util::{is_local_message, is_response_message};
 use async_channel::{self, bounded, unbounded, Receiver, Sender};
 use async_io::Timer;
-use async_trait::async_trait;
 use bytes::Bytes;
 use env_logger::init_from_env;
 use futures::future::err;
 use futures::TryFutureExt;
 use protobuf::{ProtobufEnum, RepeatedField};
-use smol::Task;
+use smol::{block_on, Task};
 use std::default::Default;
 use std::error::Error;
 use std::os::macos::raw::stat;
@@ -174,14 +173,13 @@ impl Ready {
 }
 
 /// represents a node in a raft cluster.
-#[async_trait]
-pub trait Node: Send {
+pub trait Node {
     /// Increments the interval logical clock for the `Node` by a single tick. Election
     /// timeouts and heartbeat timeouts are in units of ticks.
-    async fn tick(&mut self);
+    fn tick(&mut self);
 
     /// Causes the `Node` to transition to candidate state and start campaign to become leader.
-    async fn campaign(&self) -> SafeResult<()>;
+    fn campaign(&self) -> SafeResult<()>;
 
     /// proposes that data be appended to the log. Note that proposals can be lost without
     /// notice, therefore it is user's job to ensure proposal retries.
@@ -202,7 +200,7 @@ pub trait Node: Send {
     fn propose_conf_change(&self, cc: impl ConfChangeI) -> SafeResult<()>;
 
     /// Step advances the state machine using the given message. ctx.Err() will be returned, if any.
-    async fn step(&self, msg: Message) -> SafeResult<()>;
+    fn step(&self, msg: Message) -> SafeResult<()>;
 
     /// Ready returns a channel that returns the current point-in-time state.
     /// Users of the Node must call Advance after retrieving the state returned by Ready.
@@ -220,7 +218,7 @@ pub trait Node: Send {
     /// commands. For example. when the last Ready contains a snapshot, the application might take
     /// a long time to apply the snapshot data. To continue receiving Ready without blocking raft
     /// progress, it can call Advance before finishing applying the last ready.
-    async fn advance(&self);
+    fn advance(&self);
 
     /// ApplyConfChange applies a config change (previously passed to
     /// ProposeConfChange) to the node. This must be called whenever a config
@@ -230,22 +228,22 @@ pub trait Node: Send {
     ///
     /// Returns an opaque non-nil ConfState protobuf which must be recorded in
     /// snapshots.
-    async fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState>;
+    fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState>;
 
     /// TransferLeadership attempts to transfer leadership to the given transferee.
-    async fn transfer_leader_ship(&self, lead: u64, transferee: u64);
+    fn transfer_leader_ship(&self, lead: u64, transferee: u64);
 
     /// ReadIndex request a read state. The read state will be set in the ready.
     /// Read state has a read index. Once the application advances further than the read
     /// index, any linearizable read requests issued before the read request can be
     /// processed safely. The read state will have the same rctx attached.
-    async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()>;
+    fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()>;
 
     /// Status returns the current status of the raft state machine.
-    async fn status(&self) -> Receiver<Status>;
+    fn status(&self) -> Receiver<Status>;
 
     /// reports the given node is not reachable for the last send.
-    async fn report_unreachable(&self, id: u64);
+    fn report_unreachable(&self, id: u64);
 
     /// reports the status of the sent snapshot. The id is the raft `ID` of the follower
     /// who is meant to receive the snapshot, and the status is `SnapshotFinish` or `SnapshotFailure`.
@@ -257,10 +255,10 @@ pub trait Node: Send {
     /// updates from the leader. Therefore, it is crucial that the application ensures that any
     /// failure in snapshot sending is caught and reported back to the leader; so it can resume raft
     /// log probing in the follower.
-    async fn report_snapshot(&self, id: u64, status: SnapshotStatus);
+    fn report_snapshot(&self, id: u64, status: SnapshotStatus);
 
     /// performs any necessary termination of the `Node`.
-    async fn stop(&self);
+    fn stop(&self);
 }
 
 #[inline]
@@ -391,7 +389,7 @@ pub(crate) async fn start_node<S: Storage + Send + Sync + Clone + 'static>(
 }
 
 #[derive(Clone)]
-pub(crate) struct InnerNode<S: Storage + Send> {
+pub(crate) struct InnerNode<S: Storage> {
     pub(crate) prop_c: InnerChan<MsgWithResult>,
     pub(crate) recv_c: InnerChan<Message>,
     conf_c: InnerChan<ConfChangeV2>,
@@ -405,11 +403,7 @@ pub(crate) struct InnerNode<S: Storage + Send> {
     raw_node: SafeRawNode<S>,
 }
 
-trait AssertSend: Send + Sync {}
-
-impl<T: Send + Sync + Storage> AssertSend for InnerNode<T> {}
-
-impl<S: Storage + Send> InnerNode<S> {
+impl<S: Storage> InnerNode<S> {
     fn new(raw_node: SafeRawNode<S>) -> Self {
         InnerNode {
             prop_c: InnerChan::default(),
@@ -489,7 +483,7 @@ impl<S: Storage + Send> InnerNode<S> {
                         }else {
                               let mut msg: Message = pm.m.as_ref().unwrap().clone();
                               msg.set_from(self.rl_raw_node().raft.id);
-                              let res = self.step(msg).await;
+                              let res = self.step(msg);
                               if let Some(result) =  pm.result {
                                   result.tx_ref().send(res).await.unwrap();
                               }
@@ -505,7 +499,7 @@ impl<S: Storage + Send> InnerNode<S> {
                         }
                     }
                     _ = self.tick_c.rx_ref().recv() => {
-                        self.tick().await;
+                        self.tick();
                     }
                     _ = self.advance.rx_ref().recv() => {
                         {
@@ -613,19 +607,17 @@ impl<S: Storage + Send> InnerNode<S> {
         cs.get_voters().iter().any(|id| *id == _id)
             || cs.get_voters_outgoing().iter().any(|id| *id == _id)
     }
+}
 
-    // }
-    //
-    // #[async_trait]
-    // impl<S: Storage + Send> Node for InnerNode<S> {
-    async fn tick(&mut self) {
+impl<S: Storage> Node for InnerNode<S> {
+    fn tick(&mut self) {
         self.raw_node.wl().tick()
     }
 
-    async fn campaign(&self) -> SafeResult<()> {
+    fn campaign(&self) -> SafeResult<()> {
         let mut msg = Message::new();
         msg.set_field_type(MsgHup);
-        self.do_step(msg).await
+        block_on(self.do_step(msg))
     }
 
     fn propose(&self, data: &[u8]) -> SafeResult<()> {
@@ -642,114 +634,134 @@ impl<S: Storage + Send> InnerNode<S> {
         let mut msg = Message::new();
         msg.set_field_type(MsgProp);
         msg.set_entries(RepeatedField::from(vec![entry]));
-        smol::block_on(async { self.step(msg).await })
+        self.step(msg)
     }
 
-    async fn step(&self, m: Message) -> SafeResult<()> {
+    fn step(&self, m: Message) -> SafeResult<()> {
         //    ignore unexpected local messages receiving over network
         if is_local_message(m.get_field_type()) {
             return Ok(());
         }
-        self.do_step(m).await
+        smol::block_on(async { self.do_step(m).await })
     }
 
     fn ready(&self) -> Receiver<Ready> {
         self.ready_c.rx()
     }
 
-    async fn advance(&self) {
-        let advance = self.advance.tx_ref();
-        let done = self.done.rx_ref();
-        select! {
-            _ = advance.send(()) => {},
-            _ = done.recv() => {}
-        }
+    fn advance(&self) {
+        let advance = self.advance.tx();
+        let done = self.done.rx();
+        Task::spawn(async move {
+            select! {
+                _ = advance.send(()) => {},
+                _ = done.recv() => {}
+            }
+        })
+        .detach();
     }
 
-    async fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState> {
-        let cc_v2 = cc.as_v2();
-        let conf_tx = self.conf_c.tx();
-        let done = self.done.rx_ref();
-        select! {
-            _ = conf_tx.send(cc_v2) => {}
-            _ = done.recv() => {}
-        }
-        let conf_state = self.conf_state_c.rx();
-        select! {
-            res = conf_state.recv() => Some(res.unwrap()),
-            _ = done.recv() => None
-        }
+    fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState> {
+        smol::block_on(async {
+            let cc_v2 = cc.as_v2();
+            let conf_tx = self.conf_c.tx();
+            let done = self.done.rx_ref();
+            select! {
+                _ = conf_tx.send(cc_v2) => {}
+                _ = done.recv() => {}
+            }
+            let conf_state = self.conf_state_c.rx();
+            select! {
+                res = conf_state.recv() => Some(res.unwrap()),
+                _ = done.recv() => None
+            }
+        })
     }
 
-    async fn transfer_leader_ship(&self, lead: u64, transferee: u64) {
+    fn transfer_leader_ship(&self, lead: u64, transferee: u64) {
         let recvc = self.recv_c.tx();
         let done = self.done.rx();
-        let mut msg = Message::new();
-        msg.set_field_type(MsgTransferLeader);
-        msg.set_from(transferee);
-        msg.set_to(lead);
-        select! {
-            _ = recvc.send(msg) => {} // manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
-            _ = done.recv() => {}
-        }
+        Task::spawn(async move {
+            let mut msg = Message::new();
+            msg.set_field_type(MsgTransferLeader);
+            msg.set_from(transferee);
+            msg.set_to(lead);
+            select! {
+                _ = recvc.send(msg) => {} // manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
+                _ = done.recv() => {}
+            }
+        })
+        .detach();
     }
 
-    async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()> {
+    fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()> {
         let mut msg = Message::new();
         msg.set_field_type(MsgReadIndex);
         let mut entry = Entry::default();
         entry.set_Data(Bytes::from(rctx));
         msg.set_entries(RepeatedField::from(vec![entry]));
-        self.step(msg).await
+        self.step(msg)
     }
 
-    async fn status(&self) -> Receiver<Status> {
-        let done = self.done.rx_ref();
-        let status = self.status.tx_ref();
+    fn status(&self) -> Receiver<Status> {
+        let done = self.done.rx();
+        let status = self.status.tx();
         let ch: InnerChan<Status> = InnerChan::new();
         let (tx, rx) = (ch.tx(), ch.rx());
-        select! {
-            _ = status.send(tx) => {},
-            _ = done.recv() => {}
-        }
+        Task::spawn(async move {
+            select! {
+                _ = status.send(tx) => {},
+                _ = done.recv() => {}
+            }
+        })
+        .detach();
         rx
     }
 
-    async fn report_unreachable(&self, id: u64) {
+    fn report_unreachable(&self, id: u64) {
         let recv = self.recv_c.tx();
         let done = self.done.rx();
-        let mut msg = Message::new();
-        msg.set_field_type(MsgUnreachable);
-        msg.set_from(id);
-        select! {
-            _ = recv.send(msg) => {},
-            _ = done.recv() => {}
-        }
+        Task::spawn(async move {
+            let mut msg = Message::new();
+            msg.set_field_type(MsgUnreachable);
+            msg.set_from(id);
+            select! {
+                _ = recv.send(msg) => {},
+                _ = done.recv() => {}
+            }
+        })
+        .detach();
     }
 
-    async fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
-        let rejected = status == SnapshotStatus::Failure;
-        let mut msg = Message::new();
-        msg.set_field_type(MsgSnapStatus);
-        msg.set_from(id);
-        msg.set_reject(rejected);
+    fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
         let recv = self.recv_c.tx();
         let done = self.done.rx();
-        select! {
-            _ = recv.send(msg) => {}
-            _ = done.recv() => {}
-        }
+        Task::spawn(async move {
+            let rejected = status == SnapshotStatus::Failure;
+            let mut msg = Message::new();
+            msg.set_field_type(MsgSnapStatus);
+            msg.set_from(id);
+            msg.set_reject(rejected);
+            select! {
+                 _ = recv.send(msg) => {}
+                 _ = done.recv() => {}
+            }
+        })
+        .detach();
     }
 
-    async fn stop(&self) {
-        let done = self.done.rx_ref();
+    fn stop(&self) {
+        let done = self.done.rx();
         let stop = self.stop.tx();
-        select! {
-            _ = stop.send(()) => {},
-            _ = done.recv() => return
-        }
+        Task::spawn(async move {
+            select! {
+                _ = stop.send(()) => {},
+                _ = done.recv() => return
+            }
+        })
+        .detach();
         // Block until the stop has been acknowledged by run()
-        done.recv().await;
+        smol::block_on(self.done.rx_ref().recv());
     }
 }
 
@@ -810,7 +822,7 @@ mod tests {
                 let msgt = MessageType::from_i32(msgn).unwrap();
                 let mut msg = Message::new();
                 msg.set_field_type(msgt);
-                node.step(msg).await;
+                node.step(msg);
                 // Proposal goes to proc chan. Others go to recvc chan.
                 if msgt == MsgProp {
                     let proposal_rx = node.prop_c.rx();
@@ -865,7 +877,7 @@ mod tests {
             let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
             let mut node1 = node.clone();
             Task::spawn(async move { node1.run().await }).detach();
-            if let Err(err) = node.campaign().await {
+            if let Err(err) = node.campaign() {
                 panic!(err);
             }
             loop {
@@ -882,7 +894,7 @@ mod tests {
             }
 
             assert!(node.propose("somedata".as_bytes()).is_ok());
-            node.stop().await;
+            node.stop();
             info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
         });
     }
@@ -904,7 +916,7 @@ mod tests {
             let mut node1 = node.clone();
 
             Task::spawn(async move { node1.run().await }).detach();
-            if let Err(err) = node.campaign().await {
+            if let Err(err) = node.campaign() {
                 panic!(err);
             }
             loop {
@@ -916,31 +928,18 @@ mod tests {
                     assert_eq!(expect, wrs);
                     s.wl().append(ready.entries);
                     if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
-                        node.advance().await;
+                        node.advance();
                         break;
                     }
                 }
 
-                node.advance().await;
+                node.advance();
             }
 
             let w_request = "somedata2".as_bytes().to_vec();
-            node.read_index(w_request.clone()).await;
+            node.read_index(w_request.clone());
             node.stop();
         });
-    }
-
-    #[test]
-    fn lock() {
-        let lock = Arc::new(RwLock::new(1));
-
-        {
-            let n = lock.write().unwrap();
-            let ll = lock.clone();
-            ll.write().unwrap();
-        }
-
-        // assert!(lock.try_write().is_err());
     }
 
     fn new_test_raw_node(
