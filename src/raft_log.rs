@@ -36,8 +36,7 @@ pub enum RaftLogError {
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
-#[derive(Clone)]
-pub struct RaftLog<T: Storage + Clone> {
+pub struct RaftLog<T: Storage> {
     // storage contains all stable entries since the last snapshot
     pub(crate) storage: T,
 
@@ -64,7 +63,7 @@ pub struct RaftLog<T: Storage + Clone> {
     max_next_ents_size: u64,
 }
 
-impl<T: Storage + Clone> RaftLog<T> {
+impl<T: Storage> RaftLog<T> {
     // newLog returns log using the given storage. It recovers the log
     // to the state that it just commits and applies the latest snapshot.
     pub fn new(storage: T) -> Self {

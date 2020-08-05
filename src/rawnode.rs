@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::marker::PhantomData;
 use std::net::Shutdown::Read;
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -48,17 +49,44 @@ pub enum RawRaftError {
     StepUnknown(String),
 }
 
+#[derive(Clone)]
+pub struct SafeRawNode<S: Storage + Send> {
+    pub(crate) core_node: Arc<RwLock<RawCoreNode<S>>>,
+}
+
+impl<S: Storage + Send> SafeRawNode<S> {
+    pub fn new(code_node: RawCoreNode<S>) -> Self {
+        SafeRawNode {
+            core_node: Arc::new(RwLock::new(code_node)),
+        }
+    }
+    pub fn new2(conf: Config, storage: S) -> Self {
+        Self::new(RawCoreNode::new(conf, storage))
+    }
+
+    pub fn rl(&self) -> RwLockReadGuard<'_, RawCoreNode<S>> {
+        self.core_node.read().unwrap()
+    }
+
+    pub fn wl(&self) -> RwLockWriteGuard<'_, RawCoreNode<S>> {
+        self.core_node.write().unwrap()
+    }
+}
+
 // RawNode is a thread-unsafe Node.
 // The methods of this struct corresponds to the methods of Node and are described
 // more fully there.
-#[derive(Clone)]
-pub struct RawNode<S: Storage + Clone> {
+// #[derive(Clone)]
+pub struct RawCoreNode<S: Storage> {
     pub raft: Raft<S>,
     prev_soft_st: Option<SoftState>,
     prev_hard_st: HardState,
 }
 
-impl<S: Storage + Clone> RawNode<S> {
+trait AssertSend: Send {}
+impl<T: Storage + Send> AssertSend for Raft<T> {}
+
+impl<S: Storage> RawCoreNode<S> {
     /// NewRawNode instance a RawNode from the given configuration.
     ///
     /// See Bootstrap() for bootstrapping an initial state; this replaces the follower
@@ -66,11 +94,11 @@ impl<S: Storage + Clone> RawNode<S> {
     /// recommended that instead of calling Bootstrap. application bootstrap their
     /// state manually by setting up a Storage that has a first index > 1 and which
     /// stores the described ConfState as its InitialState.
-    pub fn new(config: Config<S>) -> RawNode<S> {
-        let mut raft = Raft::new(config);
+    pub fn new(config: Config, storage: S) -> RawCoreNode<S> {
+        let mut raft = Raft::new(config, storage);
         let prev_soft_st = raft.soft_state();
         let prev_hard_st = raft.hard_state();
-        RawNode {
+        RawCoreNode {
             raft,
             prev_soft_st: Some(prev_soft_st),
             prev_hard_st,
@@ -123,7 +151,7 @@ impl<S: Storage + Clone> RawNode<S> {
 
     /// Tick advances the interval logical clock by a single tick.
     pub fn tick(&mut self) {
-        self.raft.tick();
+        self.raft.tick_election();
     }
 
     /// TickQuiesced advances the internal logical clock by a single tick without
@@ -216,7 +244,8 @@ impl<S: Storage + Clone> RawNode<S> {
     // acceptReady is called when the consumer of the RawNode has decided to go
     // ahead and handle a Ready. Nothing must alter the state of the RawNode between
     // this call and the prior call to Ready().
-    fn accept_ready(&mut self, ready: &Ready) {
+    pub(crate) fn accept_ready(&mut self, ready: &Ready) {
+        debug!("accept ready, {:?}", ready);
         if ready.soft_state.is_some() {
             self.prev_soft_st = ready.soft_state.clone();
         }

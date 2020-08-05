@@ -22,7 +22,7 @@ use std::collections::HashMap;
 // this state from ready. it's also caller's duty to differentiate if this
 // state is what it requests through request_ctx, eg. given a unique id as
 // request_ctx
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct ReadState {
     pub index: u64,
     pub request_ctx: Vec<u8>,
@@ -66,7 +66,9 @@ impl ReadOnly {
             index,
             acks: Default::default(),
         };
-        self.pending_read_index.entry(s.clone()).or_insert(read_index_status);
+        self.pending_read_index
+            .entry(s.clone())
+            .or_insert(read_index_status);
         self.read_index_queue.push(s);
     }
 
@@ -104,7 +106,8 @@ impl ReadOnly {
         if found {
             self.read_index_queue.drain(..i);
             rss.iter().for_each(|rs| {
-                self.pending_read_index.remove(rs.req.get_entries()[0].get_Data());
+                self.pending_read_index
+                    .remove(rs.req.get_entries()[0].get_Data());
             });
             return rss;
         }

@@ -145,10 +145,15 @@ pub enum RaftError {
     ProposalDropped,
     #[error("raft: stopped")]
     Stopped,
+    #[error("raft: the node is not voter")]
+    NotIsVoter,
+    #[error("raft: hasn't leader")]
+    NoLeader,
 }
 
 /// Config contains the parameters to start a raft.
-pub struct Config<S: Storage + Clone> {
+#[derive(Clone)]
+pub struct Config {
     // id is the identify of the local raft. id cannot be 0;
     pub id: u64,
 
@@ -180,7 +185,7 @@ pub struct Config<S: Storage + Clone> {
     // stored in storage. raft reads the persisted entries and states out of
     // Storage when it needs. raft reads out the previous state and configuration
     // out of storage when restarting.
-    pub storage: S,
+    // pub storage: S,
 
     // Applied is the last applied index. It should only be set when restarting
     // raft. raft will not return entries to the application smaller or equal to
@@ -245,7 +250,7 @@ pub struct Config<S: Storage + Clone> {
     pub disable_proposal_forwarding: bool,
 }
 
-impl<S: Storage + Clone> Config<S> {
+impl Config {
     pub fn validate(&mut self) -> Result<(), String> {
         if self.id == NONE {
             return Err("cannot be none as id".to_string());
@@ -290,8 +295,7 @@ pub struct Progress {
     pub next: u64,
 }
 
-#[derive(Clone)]
-pub struct Raft<S: Storage + Clone> {
+pub struct Raft<S: Storage> {
     pub id: u64,
     pub term: u64,
     pub vote: u64,
@@ -357,19 +361,12 @@ pub struct Raft<S: Storage + Clone> {
     // when *raft changes its state to follower or candidate*.
     pub randomized_election_timeout: u64,
     pub disable_proposal_forwarding: bool,
-
-    pub tick: Option<Box<TickFn<S>>>,
-    pub step: Option<Box<StepFn<S>>>,
+    // pub tick: Option<Box<TickFn<S>>>,
+    // pub step: Option<Box<StepFn<S>>>,
 }
 
-pub(crate) type TickFn<S: Storage + Clone> = fn(raft: &mut Raft<S>);
-pub(crate) type StepFn<S: Storage + Clone> =
-    fn(raft: &mut Raft<S>, m: Message) -> Result<(), RaftError>;
-
-// pub(crate) type StepFn<S: Storage + Clone> = FnMut(&mut Raft<S>, Message) -> Result<(), RaftError>;
-
 // tick_election is run by followers and candidate after self.election_timeout
-fn tick_election<S: Storage + Clone>(raft: &mut Raft<S>) {
+fn tick_election<S: Storage>(raft: &mut Raft<S>) {
     raft.election_elapsed += 1;
     if raft.promotable() && raft.past_election_timeout() {
         raft.election_elapsed = 0;
@@ -380,18 +377,17 @@ fn tick_election<S: Storage + Clone>(raft: &mut Raft<S>) {
     }
 }
 
-impl<S: Storage + Clone> Raft<S> {
+impl<S: Storage> Raft<S> {
     // TODO:
-    pub fn new(mut config: Config<S>) -> Self {
+    pub fn new(mut config: Config, storage: S) -> Self {
         assert!(
             config.validate().is_ok(),
             "{}",
             config.validate().unwrap_err()
         );
-        let mut raft_log =
-            RaftLog::new_log_with_size(config.storage.clone(), config.max_committed_size_per_ready);
-        let state_ret = config.storage.initial_state();
+        let state_ret = storage.initial_state();
         assert!(state_ret.is_ok()); // TODO(bdarnell)
+        let mut raft_log = RaftLog::new_log_with_size(storage, config.max_committed_size_per_ready);
         let (mut hs, mut cs) = state_ret.unwrap();
         if !config.peers.is_empty() || !config.learners.is_empty() {
             if !cs.voters.is_empty() || !cs.learners.is_empty() {
@@ -429,8 +425,6 @@ impl<S: Storage + Clone> Raft<S> {
             election_timeout: config.election_tick,
             randomized_election_timeout: 0,
             disable_proposal_forwarding: config.disable_proposal_forwarding,
-            tick: None,
-            step: None,
         };
         let (cfg, prs) = restore(
             &mut Changer {
@@ -605,9 +599,9 @@ impl<S: Storage + Clone> Raft<S> {
                     ) =>
                 {
                     debug!(
-                        "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
-                        self.id, to
-                    );
+                            "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
+                            self.id, to
+                        );
                     return false;
                 }
                 Err(e) => panic!("{:?}", e), // TODO(bdarnell)
@@ -813,16 +807,22 @@ impl<S: Storage + Clone> Raft<S> {
         self.raft_log.maybe_commit(mci, self.term)
     }
 
-    // tick advances the interval logical clock by a single tick.
-    pub(crate) fn tick(&mut self) {
-        // Your Code Here (2A).
+    pub fn tick_election(&mut self) {
+        self.election_elapsed += 1;
+        if self.promotable() && self.past_election_timeout() {
+            self.election_elapsed = 0;
+            let mut msg = Message::new();
+            msg.set_from(self.id);
+            msg.set_field_type(MsgHup);
+            self.step(msg);
+        }
     }
 
     // become_follower transform this peer's state to follower
     pub(crate) fn become_follower(&mut self, term: u64, lead: u64) {
-        self.step = Some(Box::new(Self::step_follower));
+        // self.step = Some(Box::new(Self::step_follower));
         self.reset(term);
-        self.tick = Some(Box::new(tick_election));
+        // self.tick = Some(Box::new(tick_election));
         self.lead = lead;
         self.state = StateType::Follower;
         info!("{:#x} became follower at term {}", self.id, self.term);
@@ -835,9 +835,9 @@ impl<S: Storage + Clone> Raft<S> {
             StateType::Leader,
             "invalid transition [leader -> candidate]"
         );
-        self.step = Some(Box::new(Self::step_candidate));
+        // self.step = Some(Box::new(Self::step_candidate));
         self.reset(self.term + 1);
-        self.tick = Some(Box::new(tick_election));
+        // self.tick = Some(Box::new(tick_election));
         self.vote = self.id;
         self.state = StateType::Candidate;
         info!("{:#x} became candidate at term {}", self.id, self.term);
@@ -853,9 +853,9 @@ impl<S: Storage + Clone> Raft<S> {
         // becoming a pre-candidate changes our step functions and state,
         // but doesn't change anything else. In particular it doesn't increase
         // self.term or change self.vote.
-        self.step = Some(Box::new(Self::step_candidate));
+        // self.step = Some(Box::new(Self::step_candidate));
         self.prs.reset_votes();
-        self.tick = Some(Box::new(tick_election));
+        // self.tick = Some(Box::new(tick_election));
         self.lead = NONE;
         self.state = StateType::PreCandidate;
         info!("{:#x} became pre-candidate at term {}", self.id, self.term);
@@ -863,14 +863,15 @@ impl<S: Storage + Clone> Raft<S> {
 
     // become_leader transform this peer's state to leader
     fn become_leader(&mut self) {
+        info!("{:#x} become leader at term {}", self.id, self.term);
         assert_ne!(
             self.state,
             StateType::Follower,
             "invalid transition [follower->leader]"
         );
-        self.step = Some(Box::new(Self::step_leader));
+        // self.step = Some(Box::new(Self::step_leader));
         self.reset(self.term);
-        self.tick = Some(Box::new(tick_election));
+        // self.tick = Some(Box::new(tick_election));
         self.lead = self.id;
         self.state = StateType::Leader;
         // Followers enter replicate mode when they've been successfully probed
@@ -1604,11 +1605,15 @@ impl<S: Storage + Clone> Raft<S> {
     }
 
     fn execute_step_fn(&mut self, m: Message) -> Result<(), RaftError> {
-        if let Some(step) = self.step.take() {
-            step(self, m)?;
-            self.step = Some(step);
+        // if let Some(step) = self.step.take() {
+        //     step(self, m)?;
+        //     self.step = Some(step);
+        // }
+        match self.state {
+            StateType::PreCandidate | StateType::Candidate => self.step_candidate(m),
+            StateType::Follower => self.step_follower(m),
+            StateType::Leader => self.step_leader(m),
         }
-        Ok(())
     }
 
     fn step_leader(&mut self, mut m: Message) -> Result<(), RaftError> {
