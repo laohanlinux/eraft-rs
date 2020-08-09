@@ -16,8 +16,10 @@ use crate::conf_change::conf_change::Changer;
 use crate::conf_change::restore::restore;
 use crate::node::SoftState;
 use crate::node::{is_empty_hard_state, is_empty_snapshot, Ready};
-use crate::quorum::quorum::VoteResult;
-use crate::quorum::quorum::VoteResult::{VoteLost, VoteWon};
+use crate::quorum::quorum::{
+    VoteResult,
+    VoteResult::{VoteLost, VoteWon},
+};
 use crate::raft::ReadOnlyOption::{ReadOnlyLeaseBased, ReadOnlySafe};
 use crate::raft_log::{RaftLog, RaftLogError};
 use crate::raftpb::raft::EntryType::{EntryConfChange, EntryConfChangeV2, EntryNormal};
@@ -30,22 +32,20 @@ use crate::raftpb::raft::{
     ConfChangeV2, ConfState, Entry, HardState, Message, MessageType, Snapshot,
 };
 use crate::raftpb::{entry_to_conf_changei, equivalent, ConfChangeI, ExtendConfChange};
+use crate::rawnode::RawRaftError;
 use crate::read_only::{ReadIndexStatus, ReadOnly, ReadState};
-use crate::storage::StorageError::SnapshotTemporarilyUnavailable;
-use crate::storage::{Storage, StorageError};
-use crate::tracker::inflights::Inflights;
-use crate::tracker::progress::ProgressMap;
-use crate::tracker::state::StateType as ProgressStateType;
-use crate::tracker::{self, state, ProgressTracker};
+use crate::storage::{Storage, StorageError, StorageError::SnapshotTemporarilyUnavailable};
+use crate::tracker::{
+    self, inflights::Inflights, progress::ProgressMap, state,
+    state::StateType as ProgressStateType, ProgressTracker,
+};
 use crate::util::vote_resp_msg_type;
 use bytes::Bytes;
-use nom::lib::std::fmt::{Display, Formatter};
-use nom::AsBytes;
-use protobuf::reflect::ProtobufValue;
-use protobuf::RepeatedField;
+use protobuf::{reflect::ProtobufValue, RepeatedField};
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
 /// NONE is a placeholder node ID used when there is no leader.
@@ -149,6 +149,8 @@ pub enum RaftError {
     NotIsVoter,
     #[error("raft: hasn't leader")]
     NoLeader,
+    #[error("from raw_raft: {0}")]
+    FromRawRaft(RawRaftError),
 }
 
 /// Config contains the parameters to start a raft.
@@ -723,8 +725,8 @@ impl<S: Storage> Raft<S> {
                 );
                 self.pending_config_index = self.raft_log.last_index();
                 info!(
-                    "initiating automatic transition out of joint configuration {:?}",
-                    self.prs.config
+                    "initiating automatic transition out of joint configuration at index({}): {:?}",
+                    self.pending_config_index, self.prs.config
                 );
             }
         }
@@ -779,7 +781,7 @@ impl<S: Storage> Raft<S> {
         }
         // Track the size of this uncommitted proposal.
         if !self.increase_uncommitted_size(es) {
-            debug!(
+            warn!(
                 "{:#x} appending new entries to log would exceed uncommitted entry size limit; dropping proposal",
                 self.id
             );
@@ -789,20 +791,25 @@ impl<S: Storage> Raft<S> {
 
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        self.prs
+        let maybe_update = self
+            .prs
             .progress
             .get_mut(&self.id)
             .unwrap()
             .maybe_update(li);
+        // info!(
+        //     "{} maybe update {}, {:?}",
+        //     li, maybe_update, self.prs.progress
+        // );
         // regardless of maybe_commit's return, our caller will call bcast_append.
         self.maybe_commit();
         true
     }
 
-    // maybe_commit attemps to advance the commit index. Returns true if
-    // the commit index changed (in which case the caller should call
-    // self.bcast_append)
-    fn maybe_commit(&mut self) -> bool {
+    /// maybe_commit attemps to advance the commit index. Returns true if
+    /// the commit index changed (in which case the caller should call
+    /// self.bcast_append)
+    pub fn maybe_commit(&mut self) -> bool {
         let mci = self.prs.committed();
         self.raft_log.maybe_commit(mci, self.term)
     }
@@ -1010,16 +1017,16 @@ impl<S: Storage> Raft<S> {
         });
     }
 
-    fn poll(&mut self, id: u64, t: MessageType, v: bool) -> (usize, usize, VoteResult) {
+    pub(crate) fn poll(&mut self, id: u64, t: MessageType, v: bool) -> (usize, usize, VoteResult) {
         if v {
-            info!(
+            debug!(
                 "{:#x} received {:?} from {:#x} at term {}",
                 self.id, t, id, self.term
             );
         } else {
-            info!(
+            debug!(
                 "{:#x} received {:?} rejection from {:#x} at term {}",
-                self.id, t, id, self.term
+                self.id, t, id, self.term,
             );
         }
         self.prs.record_vote(id, v); // vote for itself.
@@ -1419,9 +1426,11 @@ impl<S: Storage> Raft<S> {
             res = changer.leave_joint().unwrap();
         } else {
             let (auto_leave, ok) = cc.enter_joint();
+            info!("joint consensus, auto_leave: {}, ok: {}", auto_leave, ok);
             if ok {
                 res = changer.enter_joint(auto_leave, cc.mut_changes()).unwrap();
             } else {
+                info!("simple change");
                 res = changer.simple(cc.mut_changes()).unwrap();
             }
         }
@@ -1679,7 +1688,7 @@ impl<S: Storage> Raft<S> {
                         let wants_leave_joint = v2.changes.is_empty();
 
                         let mut refused = String::new();
-                        if already_joint {
+                        if already_pending {
                             refused = format!(
                                 "possible unapplied conf change at index {} (applied to {})",
                                 self.pending_config_index, self.raft_log.applied
