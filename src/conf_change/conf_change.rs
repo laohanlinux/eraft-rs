@@ -53,11 +53,11 @@ impl Changer {
         auto_leave: bool,
         ccs: &mut [ConfChangeSingle],
     ) -> Result<(Config, ProgressMap), String> {
-        info!("enter joint, auto_leave={}", auto_leave);
         check_invariants(&self.tracker.config, &self.tracker.progress)?;
         let mut cfg = self.tracker.config.clone();
-        let mut prs = ProgressMap::default();
-        prs.extend(self.tracker.progress.clone());
+        let mut prs = self.tracker.progress.clone();
+        info!("enter joint, auto_leave={}, cfg: {}", auto_leave, cfg);
+        // prs.extend(self.tracker.progress.clone());
         if cfg.voters.joint() {
             return Err("config is already joint".to_string());
         }
@@ -91,6 +91,7 @@ impl Changer {
     ///
     /// [1]: https://github.com/ongardie/dissertation/blob/master/online-trim.pdf
     pub fn leave_joint(&mut self) -> Result<(Config, ProgressMap), String> {
+        info!("leave joint");
         let mut cfg = self.tracker.config.clone();
         let mut prs = self.tracker.progress.clone();
         if !cfg.voters.joint() {
@@ -367,7 +368,8 @@ pub fn describe(ccs: Vec<ConfChangeSingle>) -> String {
         if !buf.is_empty() {
             buf.write_char(' ').unwrap();
         }
-        buf.write_str(&format!("{:?}({})", cc.get_field_type(), cc.get_node_id())).unwrap();
+        buf.write_str(&format!("{:?}({})", cc.get_field_type(), cc.get_node_id()))
+            .unwrap();
     }
     String::from_utf8(buf.to_vec()).unwrap()
 }

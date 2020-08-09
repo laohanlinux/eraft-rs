@@ -6,6 +6,7 @@ use crate::raftpb::raft::ConfChangeType::{
 };
 use crate::raftpb::raft::EntryType::{EntryConfChange, EntryConfChangeV2};
 use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeV2, ConfState, Entry};
+use crate::util::vote_resp_msg_type;
 use bytes::{Buf, Bytes};
 use nom::lib::std::borrow::Cow;
 use nom::lib::std::fmt::{Display, Formatter};
@@ -50,7 +51,7 @@ pub fn equivalent(cs1: &ConfState, cs2: &ConfState) -> Result<(), String> {
 
 // ConfChangeI abstracts over ConfChangeV2 and (legacy) ConfChange to allow
 // treating them in a unified manner.
-pub trait ConfChangeI: Display {
+pub trait ConfChangeI: Display + protobuf::Message {
     fn as_v2(&self) -> ConfChangeV2;
     fn as_v1(&self) -> Option<&ConfChange>;
     fn to_entry(&self) -> Entry;
@@ -124,7 +125,7 @@ pub trait ExtendConfChange {
 impl ExtendConfChange for ConfChangeV2 {
     fn leave_joint(&self) -> bool {
         let mut cp = self.clone();
-        cp.mut_context().clear();
+        cp.clear_context();
         let empty = ConfChangeV2::default();
         cp.eq(&empty)
     }
@@ -140,7 +141,7 @@ impl ExtendConfChange for ConfChangeV2 {
         // base config (i.e. two voters are turned into learners in the process of
         // applying the conf change). In practice, these distinctions should not
         // matter, so we keep it simple and use Joint Consensus liberally.
-        if self.get_transition() != ConfChangeTransitionAuto || !self.changes.is_empty() {
+        if self.get_transition() != ConfChangeTransitionAuto || self.changes.len() > 1 {
             // Use Joint Consensus.
             let mut auto_leave = false;
             match self.get_transition() {
@@ -151,6 +152,30 @@ impl ExtendConfChange for ConfChangeV2 {
         }
         (false, false)
     }
+}
+
+pub fn cmp_conf_state(a: &ConfState, b: &ConfState) -> bool {
+    let mut a = a.clone();
+    let mut b = b.clone();
+    a.voters.sort();
+    b.voters.sort();
+    a.learners.sort();
+    b.learners.sort();
+    a.voters_outgoing.sort();
+    b.voters_outgoing.sort();
+    a.learners_next.sort();
+    b.learners_next.sort();
+
+    a.get_auto_leave() == b.get_auto_leave()
+        && a.get_voters() == b.get_voters()
+        && a.get_voters_outgoing() == b.get_voters_outgoing()
+        && a.get_learners() == b.get_learners()
+}
+
+pub fn cmp_config_change_v2(a: &ConfChangeV2, b: &ConfChangeV2) -> bool {
+    a.get_transition() == b.get_transition()
+        && a.get_changes() == b.get_changes()
+        && a.get_context() == b.get_context()
 }
 
 pub fn entry_to_conf_changei(entry: &Entry) -> Option<Box<dyn ConfChangeI>> {
@@ -195,7 +220,7 @@ pub fn conf_changes_from_string(s: &str) -> Result<Vec<ConfChangeSingle>, String
                 return Err(format!(
                     "unknown token {}",
                     tok.into_iter().collect::<String>()
-                ))
+                ));
             }
         }
         let id = tok.skip(0).into_iter().collect::<String>();
@@ -203,4 +228,21 @@ pub fn conf_changes_from_string(s: &str) -> Result<Vec<ConfChangeSingle>, String
         ccs.push(cc);
     }
     Ok(ccs)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::raftpb::raft::ConfChangeV2;
+    use bytes::Bytes;
+    use protobuf::Message;
+
+    #[test]
+    fn it_works() {
+        let mut cc = ConfChangeV2::new();
+        cc.set_context(Bytes::from("manual"));
+        let data = cc.write_to_bytes().unwrap();
+        let mut expect = ConfChangeV2::default();
+        expect.merge_from_bytes(data.as_slice()).unwrap();
+        assert_eq!(expect.get_context(), "manual".as_bytes());
+    }
 }

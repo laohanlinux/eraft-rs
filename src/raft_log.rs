@@ -238,6 +238,7 @@ impl<T: Storage> RaftLog<T> {
                 );
             }
             self.committed = to_commit;
+            debug!("update committed: {}", self.committed);
         }
     }
 

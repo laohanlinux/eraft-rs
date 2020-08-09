@@ -45,7 +45,7 @@ use tokio::select;
 use tokio::task;
 use tokio::time::Duration;
 
-type SafeResult<T: Send + Sync + Clone> = Result<T, RaftError>;
+pub type SafeResult<T: Send + Sync + Clone> = Result<T, RaftError>;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum SnapshotStatus {
@@ -240,7 +240,7 @@ pub trait Node {
     fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()>;
 
     /// Status returns the current status of the raft state machine.
-    fn status(&self) -> Receiver<Status>;
+    fn status(&self) -> Status;
 
     /// reports the given node is not reachable for the last send.
     fn report_unreachable(&self, id: u64);
@@ -458,7 +458,7 @@ impl<S: Storage> InnerNode<S> {
                         {
                              let mut raw_node = self.wl_raw_node();
                              let ok_before = raw_node.raft.prs.progress.contains_key(&raw_node.raft.id);
-                              cs = raw_node.apply_conf_change(cc);
+                              cs = raw_node.apply_conf_change(Box::new(cc));
                              let (ok_after, id) = (raw_node.raft.prs.progress.contains_key(&raw_node.raft.id), raw_node.raft.id);
                              if ok_before && !ok_after {
                                    let _id = raw_node.raft.id;
@@ -521,12 +521,12 @@ impl<S: Storage> InnerNode<S> {
         }
     }
 
-    async fn do_step(&self, m: Message) -> SafeResult<()> {
-        self.step_wait_option(m, false).await
+    fn do_step(&self, m: Message) {
+        smol::block_on(self.step_wait_option(m, false));
     }
 
-    async fn step_wait(&self, m: Message) -> SafeResult<()> {
-        self.step_wait_option(m, true).await
+    fn step_wait(&self, m: Message) -> SafeResult<()> {
+        smol::block_on(self.step_wait_option(m, true))
     }
 
     async fn step_wait_option(&self, m: Message, wait: bool) -> SafeResult<()> {
@@ -562,7 +562,6 @@ impl<S: Storage> InnerNode<S> {
             res = rx.recv() => return res.unwrap(),
             _ = self.done.rx_ref().recv() => return Err(RaftError::Stopped)
         }
-        Ok(())
     }
 
     pub fn get_status(&self) -> Status {
@@ -617,7 +616,8 @@ impl<S: Storage> Node for InnerNode<S> {
     fn campaign(&self) -> SafeResult<()> {
         let mut msg = Message::new();
         msg.set_field_type(MsgHup);
-        block_on(self.do_step(msg))
+        self.do_step(msg);
+        Ok(())
     }
 
     fn propose(&self, data: &[u8]) -> SafeResult<()> {
@@ -626,7 +626,7 @@ impl<S: Storage> Node for InnerNode<S> {
         let mut entry = Entry::new();
         entry.set_Data(Bytes::from(data.to_vec()));
         msg.set_entries(RepeatedField::from(vec![entry]));
-        smol::block_on(async { self.step_wait(msg).await })
+        self.step_wait(msg)
     }
 
     fn propose_conf_change(&self, cc: impl ConfChangeI) -> SafeResult<()> {
@@ -642,7 +642,8 @@ impl<S: Storage> Node for InnerNode<S> {
         if is_local_message(m.get_field_type()) {
             return Ok(());
         }
-        smol::block_on(async { self.do_step(m).await })
+        self.do_step(m);
+        Ok(())
     }
 
     fn ready(&self) -> Receiver<Ready> {
@@ -703,7 +704,7 @@ impl<S: Storage> Node for InnerNode<S> {
         self.step(msg)
     }
 
-    fn status(&self) -> Receiver<Status> {
+    fn status(&self) -> Status {
         let done = self.done.rx();
         let status = self.status.tx();
         let ch: InnerChan<Status> = InnerChan::new();
@@ -715,7 +716,7 @@ impl<S: Storage> Node for InnerNode<S> {
             }
         })
         .detach();
-        rx
+        smol::block_on(rx.recv()).unwrap()
     }
 
     fn report_unreachable(&self, id: u64) {
@@ -779,6 +780,7 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::MsgProp;
@@ -940,34 +942,5 @@ mod tests {
             node.read_index(w_request.clone());
             node.stop();
         });
-    }
-
-    fn new_test_raw_node(
-        id: u64,
-        peers: Vec<u64>,
-        election_tick: u64,
-        heartbeat_tick: u64,
-        s: SafeMemStorage,
-    ) -> SafeRawNode<SafeMemStorage> {
-        SafeRawNode::new2(new_test_conf(id, peers, election_tick, heartbeat_tick), s)
-    }
-
-    fn new_test_conf(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tick: u64) -> Config {
-        Config {
-            id,
-            peers,
-            learners: vec![],
-            election_tick,
-            heartbeat_tick,
-            applied: 0,
-            max_size_per_msg: NO_LIMIT,
-            max_committed_size_per_ready: 0,
-            max_uncommitted_entries_size: 0,
-            max_inflight_msgs: 1 << 8,
-            check_quorum: false,
-            pre_vote: false,
-            read_only_option: ReadOnlyOption::ReadOnlySafe,
-            disable_proposal_forwarding: false,
-        }
     }
 }
