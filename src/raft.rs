@@ -363,8 +363,6 @@ pub struct Raft<S: Storage> {
     // when *raft changes its state to follower or candidate*.
     pub randomized_election_timeout: u64,
     pub disable_proposal_forwarding: bool,
-    // pub tick: Option<Box<TickFn<S>>>,
-    // pub step: Option<Box<StepFn<S>>>,
 }
 
 // tick_election is run by followers and candidate after self.election_timeout

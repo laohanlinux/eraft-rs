@@ -537,62 +537,6 @@ mod tests {
     #[test]
     fn t_raw_node_propose_and_conf_change() {
         flexi_logger::Logger::with_env().start();
-        fn new_conf_change(typ: ConfChangeType, node_id: u64) -> Box<dyn ConfChangeI> {
-            let mut cc = ConfChange::new();
-            cc.set_field_type(typ);
-            cc.set_node_id(node_id);
-            Box::new(cc)
-        }
-        fn new_conf_change_v2(
-            op: Vec<(ConfChangeType, u64)>,
-            ct: Option<ConfChangeTransition>,
-        ) -> Box<dyn ConfChangeI> {
-            let mut cc = ConfChangeV2::new();
-            for (typ, node_id) in &op {
-                let mut single = ConfChangeSingle::new();
-                single.set_node_id(*node_id);
-                single.set_field_type(*typ);
-                cc.mut_changes().push(single);
-            }
-            if let Some(t) = ct {
-                cc.set_transition(t);
-            }
-            Box::new(cc)
-        }
-
-        fn new_conf_state(
-            voters: Vec<u64>,
-            outgoing: Vec<u64>,
-            learners: Vec<u64>,
-            auto_leave: Option<bool>,
-        ) -> ConfState {
-            let mut conf_state = ConfState::new();
-            conf_state.set_voters(voters);
-            conf_state.set_learners(learners);
-            conf_state.set_voters_outgoing(outgoing);
-            if auto_leave.is_some() {
-                conf_state.set_auto_leave(auto_leave.unwrap());
-            }
-            conf_state
-        }
-
-        fn new_conf_state2(
-            voters: Vec<u64>,
-            outgoing: Vec<u64>,
-            learners: Vec<u64>,
-            next_learners: Vec<u64>,
-            auto_leave: Option<bool>,
-        ) -> ConfState {
-            let mut conf_state = ConfState::new();
-            conf_state.set_voters(voters);
-            conf_state.set_learners(learners);
-            conf_state.set_voters_outgoing(outgoing);
-            conf_state.set_learners_next(next_learners);
-            if auto_leave.is_some() {
-                conf_state.set_auto_leave(auto_leave.unwrap());
-            }
-            conf_state
-        }
 
         // (cc, exp, exp2)
         let mut tests: Vec<(Box<dyn ConfChangeI>, ConfState, Option<ConfState>)> = vec![
@@ -829,5 +773,63 @@ mod tests {
                 &cs
             );
         }
+    }
+
+    fn new_conf_change(typ: ConfChangeType, node_id: u64) -> Box<dyn ConfChangeI> {
+        let mut cc = ConfChange::new();
+        cc.set_field_type(typ);
+        cc.set_node_id(node_id);
+        Box::new(cc)
+    }
+
+    fn new_conf_change_v2(
+        op: Vec<(ConfChangeType, u64)>,
+        ct: Option<ConfChangeTransition>,
+    ) -> Box<dyn ConfChangeI> {
+        let mut cc = ConfChangeV2::new();
+        for (typ, node_id) in &op {
+            let mut single = ConfChangeSingle::new();
+            single.set_node_id(*node_id);
+            single.set_field_type(*typ);
+            cc.mut_changes().push(single);
+        }
+        if let Some(t) = ct {
+            cc.set_transition(t);
+        }
+        Box::new(cc)
+    }
+
+    fn new_conf_state(
+        voters: Vec<u64>,
+        outgoing: Vec<u64>,
+        learners: Vec<u64>,
+        auto_leave: Option<bool>,
+    ) -> ConfState {
+        let mut conf_state = ConfState::new();
+        conf_state.set_voters(voters);
+        conf_state.set_learners(learners);
+        conf_state.set_voters_outgoing(outgoing);
+        if auto_leave.is_some() {
+            conf_state.set_auto_leave(auto_leave.unwrap());
+        }
+        conf_state
+    }
+
+    fn new_conf_state2(
+        voters: Vec<u64>,
+        outgoing: Vec<u64>,
+        learners: Vec<u64>,
+        next_learners: Vec<u64>,
+        auto_leave: Option<bool>,
+    ) -> ConfState {
+        let mut conf_state = ConfState::new();
+        conf_state.set_voters(voters);
+        conf_state.set_learners(learners);
+        conf_state.set_voters_outgoing(outgoing);
+        conf_state.set_learners_next(next_learners);
+        if auto_leave.is_some() {
+            conf_state.set_auto_leave(auto_leave.unwrap());
+        }
+        conf_state
     }
 }
