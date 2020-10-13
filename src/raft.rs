@@ -2151,3 +2151,34 @@ impl<S: Storage> Raft<S> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::mock::new_test_raw_node;
+    use crate::raftpb::raft::Message;
+    use crate::raftpb::raft::MessageType::MsgProp;
+    use crate::storage::SafeMemStorage;
+
+    // Ensures:
+    // 1. `MsgApp` fill the sending windows until full
+    // 2. when the windows is full, no more `MsgApp` can be sent.
+    #[test]
+    fn msg_app_flow_control_full() {
+        flexi_logger::Logger::with_env().start();
+        let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
+        let mut wl_raft = raft.wl();
+        wl_raft.raft.become_candidate();
+        wl_raft.raft.become_leader();
+        let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
+        // force the progress to be in replicate state.
+        pr.become_replicate();
+        // fill in the inflights windows
+        for i in 0..wl_raft.raft.prs.max_inflight {
+            let mut msg = Message::new();
+            msg.from = 1;
+            msg.to = 1;
+            msg.field_type = MsgProp;
+            // msg.entries = wl_raft.step(Message::new())
+        }
+    }
+}
