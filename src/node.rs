@@ -740,9 +740,9 @@ impl<S: Storage> Node for InnerNode<S> {
         Task::spawn(async move {
             let rejected = status == SnapshotStatus::Failure;
             let mut msg = Message::new();
-            msg.set_field_type(MsgSnapStatus);
-            msg.set_from(id);
-            msg.set_reject(rejected);
+            msg.field_type = MsgSnapStatus;
+            msg.from = id;
+            msg.reject = rejected;
             select! {
                  _ = recv.send(msg) => {}
                  _ = done.recv() => {}

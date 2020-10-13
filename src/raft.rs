@@ -487,10 +487,10 @@ impl<S: Storage> Raft<S> {
 
     // persists state to stable storage and then sends to its mailbox.
     fn send(&mut self, mut m: Message) {
-        if m.get_from() == NONE {
-            m.set_from(self.id);
+        if m.from == NONE {
+            m.from = self.id;
         }
-        let msg_type = m.get_field_type();
+        let msg_type = m.field_type;
         if msg_type == MsgVote
             || msg_type == MsgVoteResp
             || msg_type == MsgPreVote
@@ -509,25 +509,23 @@ impl<S: Storage> Raft<S> {
             //   MsgPreVote if the pre-vote was granted, non-zero for the
             //   same reasons MsgPreVote is
             assert_ne!(
-                m.get_term(),
-                0,
+                m.term, 0,
                 "term should be set when sending {:?}",
-                m.get_field_type()
+                m.field_type,
             );
         } else {
-            if m.get_term() != 0 {
+            if m.term != 0 {
                 panic!(
                     "term should not be set when sending {:?} (was {})",
-                    m.get_field_type(),
-                    m.get_term()
+                    m.field_type, m.term
                 );
             }
             // do not attach term to MsgProp, MsgReadIndex
             // proposals are a way to forward to the leader and
             // should be treated as local message.
             // MsgReadIndex is also forwarded to leader.
-            if m.get_field_type() != MsgProp && m.get_field_type() != MsgReadIndex {
-                m.set_term(self.term);
+            if m.field_type != MsgProp && m.field_type != MsgReadIndex {
+                m.term = self.term;
             }
         }
 
@@ -550,8 +548,10 @@ impl<S: Storage> Raft<S> {
         if pr.is_paused() {
             return false;
         }
-        let mut m = Message::new();
-        m.set_to(to);
+        let mut m = Message {
+            to,
+            ..Default::default()
+        };
 
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
@@ -569,7 +569,7 @@ impl<S: Storage> Raft<S> {
                 return false;
             }
 
-            m.set_field_type(MsgSnap);
+            m.field_type = MsgSnap;
             let snapshot = self.raft_log.snapshot();
             match self.raft_log.snapshot() {
                 Ok(snapshot) => {
@@ -609,17 +609,17 @@ impl<S: Storage> Raft<S> {
         } else {
             let term = term.unwrap();
             let ents = ents.unwrap();
-            m.set_field_type(MsgApp);
-            m.set_index(pr.next - 1);
-            m.set_logTerm(term);
-            m.set_entries(RepeatedField::from_vec(ents));
-            m.set_commit(self.raft_log.committed);
-            let n = m.get_entries().len();
+            m.field_type = MsgApp;
+            m.index = pr.next - 1;
+            m.logTerm = term;
+            m.entries = RepeatedField::from_vec(ents);
+            m.commit = self.raft_log.committed;
+            let n = m.entries.len();
             if n != 0 {
                 match &pr.state {
                     state::StateType::Replicate => {
                         // optimistically increase the next when in StateReplicate
-                        let last = m.get_entries().first().unwrap().get_Index();
+                        let last = m.entries.first().unwrap().get_Index();
                         pr.optimistic_update(last);
                         pr.inflights.add(last);
                     }
@@ -652,12 +652,14 @@ impl<S: Storage> Raft<S> {
             .unwrap()
             ._match
             .min(self.raft_log.committed);
-        let mut m = Message::new();
-        m.set_to(to);
-        m.set_field_type(MsgHeartbeat);
-        m.set_commit(commit);
+        let mut m = Message {
+            to,
+            field_type: MsgHeartbeat,
+            commit,
+            ..Default::default()
+        };
         if let Some(ctx) = ctx {
-            m.set_context(Bytes::from(ctx));
+            m.context = Bytes::from(ctx);
         }
         self.send(m);
     }

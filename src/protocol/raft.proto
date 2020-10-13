@@ -1,12 +1,6 @@
-syntax = "proto2";
+syntax = "proto3";
 package raftpb;
 
-
-option (gogoproto.marshaler_all) = true;
-option (gogoproto.sizer_all) = true;
-option (gogoproto.unmarshaler_all) = true;
-option (gogoproto.goproto_getters_all) = false;
-option (gogoproto.goproto_enum_prefix_all) = false;
 
 
 enum EntryType {
