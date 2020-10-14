@@ -118,6 +118,7 @@ impl Progress {
     pub fn become_replicate(&mut self) {
         self.reset_state(StateType::Replicate);
         self.next = self._match + 1;
+        info!("become replicate");
     }
 
     // BecomeSnapshot moves that Progress to StateSnapshot with the specified pending
@@ -340,7 +341,8 @@ mod tests {
             is_learner: true,
             inflights: ins,
         };
-        let exp = "StateSnapshot match=1 next=2 learner paused pendingSnap=123 inactive inflight=1[full]";
+        let exp =
+            "StateSnapshot match=1 next=2 learner paused pendingSnap=123 inactive inflight=1[full]";
         assert_eq!(format!("{}", pr), exp);
     }
 

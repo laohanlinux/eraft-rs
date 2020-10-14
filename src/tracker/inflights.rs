@@ -44,6 +44,9 @@ impl Inflights {
         }
         self.buffer[next] = inflight;
         self.count += 1;
+        if self.full() {
+            info!("has full {}", self.count());
+        }
     }
 
     // grow the inflight buffer by doubling up tp inflights.size. We grow on demand
