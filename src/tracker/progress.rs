@@ -118,6 +118,7 @@ impl Progress {
     pub fn become_replicate(&mut self) {
         self.reset_state(StateType::Replicate);
         self.next = self._match + 1;
+        info!("become replicate");
     }
 
     // BecomeSnapshot moves that Progress to StateSnapshot with the specified pending

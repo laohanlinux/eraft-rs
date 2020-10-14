@@ -2155,9 +2155,18 @@ impl<S: Storage> Raft<S> {
 #[cfg(test)]
 mod tests {
     use crate::mock::new_test_raw_node;
-    use crate::raftpb::raft::Message;
+    use crate::raft::Raft;
     use crate::raftpb::raft::MessageType::MsgProp;
-    use crate::storage::SafeMemStorage;
+    use crate::raftpb::raft::{Entry, Message};
+    use crate::storage::{SafeMemStorage, Storage};
+    use bytes::Bytes;
+    use protobuf::RepeatedField;
+
+    fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
+        let msg = raft.msgs.clone();
+        raft.msgs.clear();
+        msg
+    }
 
     // Ensures:
     // 1. `MsgApp` fill the sending windows until full
@@ -2169,16 +2178,53 @@ mod tests {
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
         wl_raft.raft.become_leader();
-        let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
-        // force the progress to be in replicate state.
-        pr.become_replicate();
+
+        {
+            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
+            // force the progress to be in replicate state.
+            pr.become_replicate();
+        }
         // fill in the inflights windows
-        for i in 0..wl_raft.raft.prs.max_inflight {
-            let mut msg = Message::new();
-            msg.from = 1;
-            msg.to = 1;
-            msg.field_type = MsgProp;
-            // msg.entries = wl_raft.step(Message::new())
+        {
+            for i in 0..wl_raft.raft.prs.max_inflight {
+                let mut msg = Message::new();
+                msg.from = 1;
+                msg.to = 1;
+                msg.field_type = MsgProp;
+                let mut entry = Entry::new();
+                entry.set_Data(Bytes::from_static(b"somedata"));
+                msg.entries = RepeatedField::from_vec(vec![entry]);
+                wl_raft.step(msg);
+                let msg = read_message(&mut wl_raft.raft);
+                assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
+            }
+        }
+
+        // ensure 1
+        {
+            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
+            assert!(
+                pr.inflights.full(),
+                "inflights.full = {}, want: {}",
+                pr.inflights.full(),
+                true
+            );
+        }
+
+        //ensure 2
+        {
+            for i in 0..10 {
+                let mut msg = Message::new();
+                msg.from = 1;
+                msg.to = 1;
+                msg.field_type = MsgProp;
+                let mut entry = Entry::new();
+                entry.set_Data(Bytes::from_static(b"somedata"));
+                msg.entries = RepeatedField::from_vec(vec![entry]);
+                wl_raft.step(msg);
+                let msg = read_message(&mut wl_raft.raft);
+                assert_eq!(msg.len(), 0, "{}: len(ms) = {}, want: 1", i, msg.len());
+            }
         }
     }
 }
