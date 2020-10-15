@@ -128,14 +128,14 @@ pub enum ReadOnlyOption {
 }
 
 /// Possible values for `CompaignType`
-/// campaignPreElection represents the first phase of a normal election when
+/// `CAMPAIGN_PRE_ELECTION` represents the first phase of a normal election when
 /// `Config.PreVote` is true.
-pub const campaign_pre_election: &'static str = "CampaignPreElction";
-/// campaign_election represents a normal (time-based) election (the second phase
+pub const CAMPAIGN_PRE_ELECTION: &'static str = "CampaignPreElction";
+/// `CAMPAIGN_ELECTION` represents a normal (time-based) election (the second phase
 /// of the election when `Config.Prevote` is true).
-pub const campaign_election: &'static str = "CampaignElection";
-/// campaign_transfer represents the type of leader transfer
-pub const campaign_transfer: &'static str = "CompaignTransfer";
+pub const CAMPAIGN_ELECTION: &'static str = "CampaignElection";
+/// `CAMPAIGN_TRANSFER` represents the type of leader transfer
+pub const CAMPAIGN_TRANSFER: &'static str = "CompaignTransfer";
 
 #[derive(Error, Clone, Debug, PartialEq)]
 pub enum RaftError {
@@ -387,8 +387,8 @@ impl<S: Storage> Raft<S> {
         );
         let state_ret = storage.initial_state();
         assert!(state_ret.is_ok()); // TODO(bdarnell)
-        let mut raft_log = RaftLog::new_log_with_size(storage, config.max_committed_size_per_ready);
-        let (mut hs, mut cs) = state_ret.unwrap();
+        let raft_log = RaftLog::new_log_with_size(storage, config.max_committed_size_per_ready);
+        let (hs, mut cs) = state_ret.unwrap();
         if !config.peers.is_empty() || !config.learners.is_empty() {
             if !cs.voters.is_empty() || !cs.learners.is_empty() {
                 // TODO(bdarnell): the peers argument is always nil except in
@@ -570,7 +570,6 @@ impl<S: Storage> Raft<S> {
             }
 
             m.field_type = MsgSnap;
-            let snapshot = self.raft_log.snapshot();
             match self.raft_log.snapshot() {
                 Ok(snapshot) => {
                     let metadata = snapshot.get_metadata();
@@ -626,7 +625,7 @@ impl<S: Storage> Raft<S> {
                     state::StateType::Probe => {
                         pr.probe_sent = true;
                     }
-                    s_ => panic!(
+                    _ => panic!(
                         "{:#x} is sending append in unhandled state {}",
                         self.id, pr.state
                     ),
@@ -791,16 +790,11 @@ impl<S: Storage> Raft<S> {
 
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        let maybe_update = self
-            .prs
+        self.prs
             .progress
             .get_mut(&self.id)
             .unwrap()
             .maybe_update(li);
-        // info!(
-        //     "{} maybe update {}, {:?}",
-        //     li, maybe_update, self.prs.progress
-        // );
         // regardless of maybe_commit's return, our caller will call bcast_append.
         self.maybe_commit();
         true
@@ -1340,8 +1334,7 @@ impl<S: Storage> Raft<S> {
         // More defense-in-depth: throw away snapshot if recipient is not in the
         // config. This shouldn't ever happen (at the time of writing) but lots of
         // code here and there assumes that r.id is in the progress tracker.
-        let mut found = false;
-        let mut cs = s.get_metadata().get_conf_state();
+        let cs = s.get_metadata().get_conf_state();
         let found = vec![cs.voters.clone(), cs.learners.clone()]
             .iter()
             .flatten()
@@ -1376,7 +1369,7 @@ impl<S: Storage> Raft<S> {
 
         // Reset the configuration and add the (potentially updated) peers in anew.
         self.prs = ProgressTracker::new(self.prs.max_inflight);
-        let (mut cfg, prs) = restore(
+        let (cfg, prs) = restore(
             &mut Changer {
                 tracker: self.prs.clone(),
                 last_index: self.raft_log.last_index(),
@@ -1387,7 +1380,7 @@ impl<S: Storage> Raft<S> {
         // handling or the client corrupted the conf change.
         .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
         .unwrap();
-        equivalent(cs, &self.switch_to_config(cfg, prs));
+        equivalent(cs, &self.switch_to_config(cfg, prs)).unwrap();
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded
 
@@ -1447,7 +1440,7 @@ impl<S: Storage> Raft<S> {
         self.prs.config = cfg;
         self.prs.progress = prs;
         info!("{} switched to configuration {}", self.id, self.prs.config);
-        let mut cs = self.prs.config_state();
+        let cs = self.prs.config_state();
         let pr = self.prs.progress.get(&self.id);
         // Update
         self.is_learner = pr.is_some() && pr.as_ref().unwrap().is_learner;
@@ -1929,7 +1922,7 @@ impl<S: Storage> Raft<S> {
         Ok(())
     }
 
-    fn callback_leader_app_resp(&mut self, mut m: Message) -> Result<(), RaftError> {
+    fn callback_leader_app_resp(&mut self, m: Message) -> Result<(), RaftError> {
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         pr.recent_active = true;
         if m.get_reject() {
@@ -2018,7 +2011,7 @@ impl<S: Storage> Raft<S> {
         Ok(())
     }
 
-    fn callback_heartbeat_resp(&mut self, mut m: Message) -> Result<(), RaftError> {
+    fn callback_heartbeat_resp(&mut self, m: Message) -> Result<(), RaftError> {
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         pr.recent_active = true;
         pr.probe_sent = false;
@@ -2050,7 +2043,7 @@ impl<S: Storage> Raft<S> {
         Ok(())
     }
 
-    fn callback_unreachable(&mut self, mut m: Message) -> Result<(), RaftError> {
+    fn callback_unreachable(&mut self, m: Message) -> Result<(), RaftError> {
         // During optimistic replication, if the remote become unreachable,
         // there is huge probability that a MsgApp is lost.
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
@@ -2066,7 +2059,7 @@ impl<S: Storage> Raft<S> {
         Ok(())
     }
 
-    fn callback_snapshot_status(&mut self, mut m: Message) -> Result<(), RaftError> {
+    fn callback_snapshot_status(&mut self, m: Message) -> Result<(), RaftError> {
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         if pr.state != ProgressStateType::Snapshot {
             return Ok(());
@@ -2090,7 +2083,7 @@ impl<S: Storage> Raft<S> {
         Ok(())
     }
 
-    fn callback_transfer_leader(&mut self, mut m: Message) -> Result<(), RaftError> {
+    fn callback_transfer_leader(&mut self, m: Message) -> Result<(), RaftError> {
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         if pr.is_learner {
             debug!("{:#x} is learner. Ignored transferring leadership", self.id);
@@ -2154,9 +2147,9 @@ impl<S: Storage> Raft<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::new_test_raw_node;
+    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts};
     use crate::raft::Raft;
-    use crate::raftpb::raft::MessageType::MsgProp;
+    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use bytes::Bytes;
@@ -2191,9 +2184,7 @@ mod tests {
                 msg.from = 1;
                 msg.to = 1;
                 msg.field_type = MsgProp;
-                let mut entry = Entry::new();
-                entry.set_Data(Bytes::from_static(b"somedata"));
-                msg.entries = RepeatedField::from_vec(vec![entry]);
+                msg.entries = MocksEnts::from("somedata").into();
                 wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
@@ -2218,12 +2209,68 @@ mod tests {
                 msg.from = 1;
                 msg.to = 1;
                 msg.field_type = MsgProp;
-                let mut entry = Entry::new();
-                entry.set_Data(Bytes::from_static(b"somedata"));
-                msg.entries = RepeatedField::from_vec(vec![entry]);
+                msg.entries = MocksEnts::from("somedata").into();
                 wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 0, "{}: len(ms) = {}, want: 1", i, msg.len());
+            }
+        }
+    }
+
+    // Ensures `MsgAppResp` can move
+    // forward the sending windows correctly:
+    // 1. valid `MsgAppResp.Index` moves the windows to pass all smaller or euqal index.
+    // 2. out-of-dated `MsgAppResp` has no effect on the sliding windows.
+    #[test]
+    fn msg_app_flow_control_move_forward() {
+        flexi_logger::Logger::with_env().start();
+        let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
+        let mut wl_raft = raft.wl();
+        wl_raft.raft.become_candidate();
+        wl_raft.raft.become_leader();
+        {
+            let mut pr2 = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
+            // force the progress to be in replicate state
+            pr2.become_replicate();
+        }
+
+        // fill in the inflights windows.
+        {
+            for i in 0..wl_raft.raft.prs.max_inflight {
+                let mut msg = Message::new();
+                msg.from = 1;
+                msg.to = 1;
+                msg.field_type = MsgProp;
+                msg.set_entries(MocksEnts::from("somedata").into());
+                wl_raft.step(msg);
+                let msg = read_message(&mut wl_raft.raft);
+                assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
+            }
+        }
+
+        // 1 is noop, 2 is the first proposal we just sent.
+        // so we start with 2.
+        {
+            for tt in 2..wl_raft.raft.prs.max_inflight {
+                // move forward the windows
+                {
+                    let mut msg = Message::new();
+                    msg.from = 2;
+                    msg.to = 1;
+                    msg.field_type = MsgAppResp;
+                    msg.index = tt;
+                    wl_raft.step(msg);
+                    read_message(&mut wl_raft.raft);
+                }
+
+                // fill in the inflights windows again.
+                {
+                    let mut msg = Message::new();
+                    msg.from = 1;
+                    msg.to = 1;
+                    msg.set_field_type(MsgProp);
+                    msg.set_entries(MocksEnts::from("somedata").into());
+                }
             }
         }
     }
