@@ -39,7 +39,6 @@ use protobuf::{ProtobufEnum, RepeatedField};
 use smol::{block_on, Task};
 use std::default::Default;
 use std::error::Error;
-use std::os::macos::raw::stat;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::select;
 use tokio::task;
