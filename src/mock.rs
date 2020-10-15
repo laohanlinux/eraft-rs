@@ -3,6 +3,66 @@ use crate::raft_log::RaftLog;
 use crate::raftpb::raft::{Entry, Snapshot};
 use crate::rawnode::SafeRawNode;
 use crate::storage::{MemoryStorage, SafeMemStorage, Storage};
+use bytes::Bytes;
+use protobuf::RepeatedField;
+
+pub struct MocksEnts(Entry);
+
+impl Into<Entry> for MocksEnts {
+    fn into(self) -> Entry {
+        self.0
+    }
+}
+
+impl Into<RepeatedField<Entry>> for MocksEnts {
+    fn into(self) -> RepeatedField<Entry> {
+        RepeatedField::from_vec(vec![self.0])
+    }
+}
+
+impl From<&str> for MocksEnts {
+    fn from(buf: &str) -> Self {
+        let v = Vec::from(buf);
+        let mut entry = Entry::new();
+        entry.set_Data(Bytes::from(v));
+        MocksEnts(entry)
+    }
+}
+
+pub struct MockEntry(Entry);
+
+impl MockEntry {
+    pub fn set_data(mut self, buf: Vec<u8>) -> MockEntry {
+        self.0.set_Data(Bytes::from(buf));
+        self
+    }
+
+    pub fn set_index(mut self, index: u64) -> MockEntry {
+        self.0.set_Index(index);
+        self
+    }
+}
+
+impl Into<Entry> for MockEntry {
+    fn into(self) -> Entry {
+        self.0
+    }
+}
+
+impl From<Vec<u8>> for MockEntry {
+    fn from(v: Vec<u8>) -> Self {
+        let mut entry = Entry::new();
+        entry.set_Data(Bytes::from(v));
+        MockEntry(entry)
+    }
+}
+
+impl From<&str> for MockEntry {
+    fn from(buf: &str) -> Self {
+        let v = Vec::from(buf);
+        MockEntry::from(buf)
+    }
+}
 
 pub fn new_entry(index: u64, term: u64) -> Entry {
     let mut entry = Entry::new();

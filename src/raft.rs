@@ -135,7 +135,7 @@ pub const CAMPAIGN_PRE_ELECTION: &'static str = "CampaignPreElction";
 /// of the election when `Config.Prevote` is true).
 pub const CAMPAIGN_ELECTION: &'static str = "CampaignElection";
 /// `CAMPAIGN_TRANSFER` represents the type of leader transfer
-pub const CAMPAIGN_TRANSFER : &'static str = "CompaignTransfer";
+pub const CAMPAIGN_TRANSFER: &'static str = "CompaignTransfer";
 
 #[derive(Error, Clone, Debug, PartialEq)]
 pub enum RaftError {
@@ -384,10 +384,10 @@ impl<S: Storage> Raft<S> {
             config.validate().is_ok(),
             "{}",
             config.validate().unwrap_err()
-            );
+        );
         let state_ret = storage.initial_state();
         assert!(state_ret.is_ok()); // TODO(bdarnell)
-        let  raft_log = RaftLog::new_log_with_size(storage, config.max_committed_size_per_ready);
+        let raft_log = RaftLog::new_log_with_size(storage, config.max_committed_size_per_ready);
         let (hs, mut cs) = state_ret.unwrap();
         if !config.peers.is_empty() || !config.learners.is_empty() {
             if !cs.voters.is_empty() || !cs.learners.is_empty() {
@@ -790,8 +790,7 @@ impl<S: Storage> Raft<S> {
 
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        self
-            .prs
+        self.prs
             .progress
             .get_mut(&self.id)
             .unwrap()
@@ -2148,9 +2147,9 @@ impl<S: Storage> Raft<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::new_test_raw_node;
+    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts};
     use crate::raft::Raft;
-    use crate::raftpb::raft::MessageType::{MsgProp, MsgAppResp};
+    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use bytes::Bytes;
@@ -2185,9 +2184,7 @@ mod tests {
                 msg.from = 1;
                 msg.to = 1;
                 msg.field_type = MsgProp;
-                let mut entry = Entry::new();
-                entry.set_Data(Bytes::from_static(b"somedata"));
-                msg.entries = RepeatedField::from_vec(vec![entry]);
+                msg.entries = MocksEnts::from("somedata").into();
                 wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
@@ -2212,9 +2209,7 @@ mod tests {
                 msg.from = 1;
                 msg.to = 1;
                 msg.field_type = MsgProp;
-                let mut entry = Entry::new();
-                entry.set_Data(Bytes::from_static(b"somedata"));
-                msg.entries = RepeatedField::from_vec(vec![entry]);
+                msg.entries = MocksEnts::from("somedata").into();
                 wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 0, "{}: len(ms) = {}, want: 1", i, msg.len());
@@ -2222,14 +2217,13 @@ mod tests {
         }
     }
 
-
-    // Ensures `MsgAppResp` can move 
+    // Ensures `MsgAppResp` can move
     // forward the sending windows correctly:
     // 1. valid `MsgAppResp.Index` moves the windows to pass all smaller or euqal index.
     // 2. out-of-dated `MsgAppResp` has no effect on the sliding windows.
     #[test]
     fn msg_app_flow_control_move_forward() {
-         flexi_logger::Logger::with_env().start();
+        flexi_logger::Logger::with_env().start();
         let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
@@ -2247,9 +2241,7 @@ mod tests {
                 msg.from = 1;
                 msg.to = 1;
                 msg.field_type = MsgProp;
-                let mut entry = Entry::new();
-                entry.set_Data(Bytes::from_static(b"somedata"));
-                msg.entries = RepeatedField::from_vec(vec![entry]);
+                msg.set_entries(MocksEnts::from("somedata").into());
                 wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
@@ -2261,13 +2253,24 @@ mod tests {
         {
             for tt in 2..wl_raft.raft.prs.max_inflight {
                 // move forward the windows
-                let mut msg = Message::new();
-                msg.from = 2;
-                msg.to = 1;
-                msg.field_type = MsgAppResp;
-                msg.index = tt;
-                read_message(&mut wl_raft.raft);
+                {
+                    let mut msg = Message::new();
+                    msg.from = 2;
+                    msg.to = 1;
+                    msg.field_type = MsgAppResp;
+                    msg.index = tt;
+                    wl_raft.step(msg);
+                    read_message(&mut wl_raft.raft);
+                }
+
                 // fill in the inflights windows again.
+                {
+                    let mut msg = Message::new();
+                    msg.from = 1;
+                    msg.to = 1;
+                    msg.set_field_type(MsgProp);
+                    msg.set_entries(MocksEnts::from("somedata").into());
+                }
             }
         }
     }
