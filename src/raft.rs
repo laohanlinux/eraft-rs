@@ -669,7 +669,13 @@ impl<S: Storage> Raft<S> {
         let ids = self.prs.visit_nodes();
         let cur_id = self.id;
         for id in ids.iter().filter(|id| **id != cur_id) {
-            self.send_append(*id);
+            if !self.send_append(*id) {
+                debug!(
+                    "message not to sent, {} inflights full: {}",
+                    id,
+                    self.prs.progress.must_get(id).inflights.full()
+                );
+            }
         }
         //        self.prs.visit(|id, _| {
         //            if id == c_id {
@@ -787,14 +793,9 @@ impl<S: Storage> Raft<S> {
             // Drop the proposal.
             return false;
         }
-
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        self.prs
-            .progress
-            .get_mut(&self.id)
-            .unwrap()
-            .maybe_update(li);
+        self.prs.progress.must_get_mut(&self.id).maybe_update(li);
         // regardless of maybe_commit's return, our caller will call bcast_append.
         self.maybe_commit();
         true
@@ -830,7 +831,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // become_candidate transform this peer's state to candidate
-    fn become_candidate(&mut self) {
+    pub(crate) fn become_candidate(&mut self) {
         assert_ne!(
             self.state,
             StateType::Leader,
@@ -863,7 +864,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // become_leader transform this peer's state to leader
-    fn become_leader(&mut self) {
+    pub(crate) fn become_leader(&mut self) {
         info!("{:#x} become leader at term {}", self.id, self.term);
         assert_ne!(
             self.state,
@@ -1033,6 +1034,7 @@ impl<S: Storage> Raft<S> {
         match m.get_term() {
             0 => {
                 // local message
+                debug!("local message, {:?}", m);
             }
             term if term > self.term => {
                 if m.get_field_type() == MsgVote || m.get_field_type() == MsgPreVote {
@@ -1607,10 +1609,6 @@ impl<S: Storage> Raft<S> {
     }
 
     fn execute_step_fn(&mut self, m: Message) -> Result<(), RaftError> {
-        // if let Some(step) = self.step.take() {
-        //     step(self, m)?;
-        //     self.step = Some(step);
-        // }
         match self.state {
             StateType::PreCandidate | StateType::Candidate => self.step_candidate(m),
             StateType::Follower => self.step_follower(m),
@@ -1620,8 +1618,7 @@ impl<S: Storage> Raft<S> {
 
     fn step_leader(&mut self, mut m: Message) -> Result<(), RaftError> {
         // These message types do not require any progress for m.From
-        let typ = m.get_field_type();
-        match typ {
+        match m.field_type {
             MsgBeat => {
                 self.bcast_heartbeat();
                 return Ok(());
@@ -1659,7 +1656,7 @@ impl<S: Storage> Raft<S> {
                     "{:#x} stepped empty MsgProp",
                     self.id
                 );
-                if self.prs.progress.get(&self.id).is_none() {
+                if !self.prs.progress.contains_key(&self.id) {
                     // If we are not currently a member of the range (i.e. this node
                     // was removed from the configuration while serving as leader).
                     // drop any new proposals.
@@ -1761,7 +1758,7 @@ impl<S: Storage> Raft<S> {
             );
             return Ok(());
         }
-        match typ {
+        match m.field_type {
             MsgAppResp => self.callback_leader_app_resp(m),
             MsgHeartbeatResp => self.callback_heartbeat_resp(m),
             MsgSnapStatus => self.callback_snapshot_status(m),
@@ -1923,7 +1920,8 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_leader_app_resp(&mut self, m: Message) -> Result<(), RaftError> {
-        let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
+        debug!("call back leader app resp, from: {:?}", m);
+        let pr = self.prs.progress.must_get_mut(&m.get_from());
         pr.recent_active = true;
         if m.get_reject() {
             info!(
@@ -1976,6 +1974,7 @@ impl<S: Storage> Raft<S> {
                 pr.become_replicate();
             }
             ProgressStateType::Replicate => {
+                debug!("free inflights, id: {:0x} {:?}", self.id, m);
                 pr.inflights.free_le(m.get_index());
             }
             _ => {}
@@ -1989,17 +1988,15 @@ impl<S: Storage> Raft<S> {
             // latest commit index, so send it.
             self.send_append(m.get_from());
         }
-        // // We've updated flow control information above, which may
-        // // allow us to send multiple (size-limited) in-flight messages
-        // // at once (such as when transitioning from probe to
-        // // replicate, or when freeTo() covers multiple messages). If
-        // // we have more entries to send, send as many messages as we
-        // // can (without sending empty messages for the commit index)
+        // We've updated flow control information above, which may
+        // allow us to send multiple (size-limited) in-flight messages
+        // at once (such as when transitioning from probe to
+        // replicate, or when freeTo() covers multiple messages). If
+        // we have more entries to send, send as many messages as we
+        // can (without sending empty messages for the commit index)
         while self.maybe_send_append(m.get_from(), false) {}
-
         let _match = self.prs.progress.get(&m.get_from()).unwrap()._match;
-        //
-        // // Transfer leadership is in progress.
+        // Transfer leadership is in progress.
         if m.get_from() == self.lead_transferee && _match == self.raft_log.last_index() {
             info!(
                 "{:#x} sent MsgTimeoutNow to {:#x} after received MsgAppResp",
@@ -2142,136 +2139,5 @@ impl<S: Storage> Raft<S> {
                 acc
             }
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts};
-    use crate::raft::Raft;
-    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
-    use crate::raftpb::raft::{Entry, Message};
-    use crate::storage::{SafeMemStorage, Storage};
-    use bytes::Bytes;
-    use protobuf::RepeatedField;
-
-    fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
-        let msg = raft.msgs.clone();
-        raft.msgs.clear();
-        msg
-    }
-
-    // Ensures:
-    // 1. `MsgApp` fill the sending windows until full
-    // 2. when the windows is full, no more `MsgApp` can be sent.
-    #[test]
-    fn msg_app_flow_control_full() {
-        flexi_logger::Logger::with_env().start();
-        let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
-        let mut wl_raft = raft.wl();
-        wl_raft.raft.become_candidate();
-        wl_raft.raft.become_leader();
-
-        {
-            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
-            // force the progress to be in replicate state.
-            pr.become_replicate();
-        }
-        // fill in the inflights windows
-        {
-            for i in 0..wl_raft.raft.prs.max_inflight {
-                let mut msg = Message::new();
-                msg.from = 1;
-                msg.to = 1;
-                msg.field_type = MsgProp;
-                msg.entries = MocksEnts::from("somedata").into();
-                wl_raft.step(msg);
-                let msg = read_message(&mut wl_raft.raft);
-                assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
-            }
-        }
-
-        // ensure 1
-        {
-            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
-            assert!(
-                pr.inflights.full(),
-                "inflights.full = {}, want: {}",
-                pr.inflights.full(),
-                true
-            );
-        }
-
-        //ensure 2
-        {
-            for i in 0..10 {
-                let mut msg = Message::new();
-                msg.from = 1;
-                msg.to = 1;
-                msg.field_type = MsgProp;
-                msg.entries = MocksEnts::from("somedata").into();
-                wl_raft.step(msg);
-                let msg = read_message(&mut wl_raft.raft);
-                assert_eq!(msg.len(), 0, "{}: len(ms) = {}, want: 1", i, msg.len());
-            }
-        }
-    }
-
-    // Ensures `MsgAppResp` can move
-    // forward the sending windows correctly:
-    // 1. valid `MsgAppResp.Index` moves the windows to pass all smaller or euqal index.
-    // 2. out-of-dated `MsgAppResp` has no effect on the sliding windows.
-    #[test]
-    fn msg_app_flow_control_move_forward() {
-        flexi_logger::Logger::with_env().start();
-        let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
-        let mut wl_raft = raft.wl();
-        wl_raft.raft.become_candidate();
-        wl_raft.raft.become_leader();
-        {
-            let mut pr2 = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
-            // force the progress to be in replicate state
-            pr2.become_replicate();
-        }
-
-        // fill in the inflights windows.
-        {
-            for i in 0..wl_raft.raft.prs.max_inflight {
-                let mut msg = Message::new();
-                msg.from = 1;
-                msg.to = 1;
-                msg.field_type = MsgProp;
-                msg.set_entries(MocksEnts::from("somedata").into());
-                wl_raft.step(msg);
-                let msg = read_message(&mut wl_raft.raft);
-                assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
-            }
-        }
-
-        // 1 is noop, 2 is the first proposal we just sent.
-        // so we start with 2.
-        {
-            for tt in 2..wl_raft.raft.prs.max_inflight {
-                // move forward the windows
-                {
-                    let mut msg = Message::new();
-                    msg.from = 2;
-                    msg.to = 1;
-                    msg.field_type = MsgAppResp;
-                    msg.index = tt;
-                    wl_raft.step(msg);
-                    read_message(&mut wl_raft.raft);
-                }
-
-                // fill in the inflights windows again.
-                {
-                    let mut msg = Message::new();
-                    msg.from = 1;
-                    msg.to = 1;
-                    msg.set_field_type(MsgProp);
-                    msg.set_entries(MocksEnts::from("somedata").into());
-                }
-            }
-        }
     }
 }
