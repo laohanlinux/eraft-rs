@@ -290,6 +290,11 @@ impl ProgressMap {
     }
 
     #[inline]
+    pub fn must_get(&self, id: &u64) -> &Progress {
+        self.map.get(id).unwrap()
+    }
+
+    #[inline]
     pub fn keys(&self) -> Keys<'_, u64, Progress> {
         self.map.keys()
     }
@@ -297,6 +302,11 @@ impl ProgressMap {
     #[inline]
     pub fn get_mut(&mut self, id: &u64) -> Option<&mut Progress> {
         self.map.get_mut(id)
+    }
+
+    #[inline]
+    pub fn must_get_mut(&mut self, id: &u64) -> &mut Progress {
+        self.map.get_mut(id).unwrap()
     }
 
     #[inline]

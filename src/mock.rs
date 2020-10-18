@@ -122,7 +122,7 @@ pub fn new_test_conf(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tic
         max_size_per_msg: NO_LIMIT,
         max_committed_size_per_ready: 0,
         max_uncommitted_entries_size: 0,
-        max_inflight_msgs: 1 << 8,
+        max_inflight_msgs: 1 << 3,
         check_quorum: false,
         pre_vote: false,
         read_only_option: ReadOnlyOption::ReadOnlySafe,

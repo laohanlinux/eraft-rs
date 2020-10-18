@@ -669,7 +669,13 @@ impl<S: Storage> Raft<S> {
         let ids = self.prs.visit_nodes();
         let cur_id = self.id;
         for id in ids.iter().filter(|id| **id != cur_id) {
-            self.send_append(*id);
+            if !self.send_append(*id) {
+                debug!(
+                    "message not to sent, {} inflights full: {}",
+                    id,
+                    self.prs.progress.must_get(id).inflights.full()
+                );
+            }
         }
         //        self.prs.visit(|id, _| {
         //            if id == c_id {
@@ -787,15 +793,9 @@ impl<S: Storage> Raft<S> {
             // Drop the proposal.
             return false;
         }
-
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
-        self.prs
-            .progress
-            .get_mut(&self.id)
-            .unwrap()
-            .maybe_update(li);
-        // regardless of maybe_commit's return, our caller will call bcast_append.
+        self.prs.progress.must_get_mut(&self.id).maybe_update(li);
         self.maybe_commit();
         true
     }
@@ -830,7 +830,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // become_candidate transform this peer's state to candidate
-    fn become_candidate(&mut self) {
+    pub(crate) fn become_candidate(&mut self) {
         assert_ne!(
             self.state,
             StateType::Leader,
@@ -863,7 +863,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // become_leader transform this peer's state to leader
-    fn become_leader(&mut self) {
+    pub(crate) fn become_leader(&mut self) {
         info!("{:#x} become leader at term {}", self.id, self.term);
         assert_ne!(
             self.state,
@@ -1033,6 +1033,7 @@ impl<S: Storage> Raft<S> {
         match m.get_term() {
             0 => {
                 // local message
+                debug!("local message, {:?}", m);
             }
             term if term > self.term => {
                 if m.get_field_type() == MsgVote || m.get_field_type() == MsgPreVote {
@@ -1607,10 +1608,6 @@ impl<S: Storage> Raft<S> {
     }
 
     fn execute_step_fn(&mut self, m: Message) -> Result<(), RaftError> {
-        // if let Some(step) = self.step.take() {
-        //     step(self, m)?;
-        //     self.step = Some(step);
-        // }
         match self.state {
             StateType::PreCandidate | StateType::Candidate => self.step_candidate(m),
             StateType::Follower => self.step_follower(m),
@@ -1620,8 +1617,7 @@ impl<S: Storage> Raft<S> {
 
     fn step_leader(&mut self, mut m: Message) -> Result<(), RaftError> {
         // These message types do not require any progress for m.From
-        let typ = m.get_field_type();
-        match typ {
+        match m.field_type {
             MsgBeat => {
                 self.bcast_heartbeat();
                 return Ok(());
@@ -1659,7 +1655,7 @@ impl<S: Storage> Raft<S> {
                     "{:#x} stepped empty MsgProp",
                     self.id
                 );
-                if self.prs.progress.get(&self.id).is_none() {
+                if !self.prs.progress.contains_key(&self.id) {
                     // If we are not currently a member of the range (i.e. this node
                     // was removed from the configuration while serving as leader).
                     // drop any new proposals.
@@ -1761,7 +1757,7 @@ impl<S: Storage> Raft<S> {
             );
             return Ok(());
         }
-        match typ {
+        match m.field_type {
             MsgAppResp => self.callback_leader_app_resp(m),
             MsgHeartbeatResp => self.callback_heartbeat_resp(m),
             MsgSnapStatus => self.callback_snapshot_status(m),
@@ -1923,7 +1919,8 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_leader_app_resp(&mut self, m: Message) -> Result<(), RaftError> {
-        let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
+        debug!("call back leader app resp, from: {:?}", m);
+        let pr = self.prs.progress.must_get_mut(&m.get_from());
         pr.recent_active = true;
         if m.get_reject() {
             info!(
@@ -1976,6 +1973,7 @@ impl<S: Storage> Raft<S> {
                 pr.become_replicate();
             }
             ProgressStateType::Replicate => {
+                debug!("free inflights, id: {:0x} {:?}", self.id, m);
                 pr.inflights.free_le(m.get_index());
             }
             _ => {}
@@ -1989,17 +1987,15 @@ impl<S: Storage> Raft<S> {
             // latest commit index, so send it.
             self.send_append(m.get_from());
         }
-        // // We've updated flow control information above, which may
-        // // allow us to send multiple (size-limited) in-flight messages
-        // // at once (such as when transitioning from probe to
-        // // replicate, or when freeTo() covers multiple messages). If
-        // // we have more entries to send, send as many messages as we
-        // // can (without sending empty messages for the commit index)
+        // We've updated flow control information above, which may
+        // allow us to send multiple (size-limited) in-flight messages
+        // at once (such as when transitioning from probe to
+        // replicate, or when freeTo() covers multiple messages). If
+        // we have more entries to send, send as many messages as we
+        // can (without sending empty messages for the commit index)
         while self.maybe_send_append(m.get_from(), false) {}
-
         let _match = self.prs.progress.get(&m.get_from()).unwrap()._match;
-        //
-        // // Transfer leadership is in progress.
+        // Transfer leadership is in progress.
         if m.get_from() == self.lead_transferee && _match == self.raft_log.last_index() {
             info!(
                 "{:#x} sent MsgTimeoutNow to {:#x} after received MsgAppResp",

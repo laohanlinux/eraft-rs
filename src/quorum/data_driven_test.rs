@@ -14,14 +14,14 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::nom_data_test::{TestData, walk, execute_test};
-    use crate::quorum::quorum::{Index, MapAckIndexer, AckedIndexer, to_string};
-    use crate::quorum::majority::MajorityConfig;
-    use std::collections::{HashSet, HashMap};
+    use crate::nom_data_test::{execute_test, walk, TestData};
     use crate::quorum::joint::JointConfig;
-    use std::iter::FromIterator;
-    use std::fmt::Write;
+    use crate::quorum::majority::MajorityConfig;
     use crate::quorum::quick_test::alternative_majority_committed_index;
+    use crate::quorum::quorum::{to_string, AckedIndexer, Index, MapAckIndexer};
+    use std::collections::{HashMap, HashSet};
+    use std::fmt::Write;
+    use std::iter::FromIterator;
 
     // parses and executes and the test cases in ./testdata/*. An entry
     // in such a file specifies the command, which is either of "committed" to check
@@ -96,52 +96,63 @@ mod tests {
                                     panic!(format!("unknown vote: {}", val));
                                 }
                             }
-                            other => panic!(format!("unknown arg {:?}", cmd_arg))
+                            other => panic!(format!("unknown arg {:?}", cmd_arg)),
                         }
                     }
                 }
 
                 // Build the two majority configs.
-                let mut c = MajorityConfig { votes: HashSet::from_iter(ids.clone().into_iter()) };
-                let mut cj = MajorityConfig { votes: HashSet::from_iter(idsj.clone().into_iter()) };
+                let mut c = MajorityConfig {
+                    votes: HashSet::from_iter(ids.clone().into_iter()),
+                };
+                let mut cj = MajorityConfig {
+                    votes: HashSet::from_iter(idsj.clone().into_iter()),
+                };
 
                 // Helper that returns an AckedIndexer which has the specified indexes
                 // mapped to the right IDs.
-                let make_lookuper = |idxs: &Vec<Index>, ids: &Vec<u64>, idsj: &Vec<u64>| -> MapAckIndexer {
-                    let mut l: HashMap<u64, u64> = HashMap::new();
-                    let mut p = 0;
-                    let mut _ids: Vec<Index> = Vec::new();
-                    _ids.extend(ids);
-                    _ids.extend(idsj);
-                    for id in &_ids {
-                        if l.contains_key(id) {
-                            continue;
+                let make_lookuper =
+                    |idxs: &Vec<Index>, ids: &Vec<u64>, idsj: &Vec<u64>| -> MapAckIndexer {
+                        let mut l: HashMap<u64, u64> = HashMap::new();
+                        let mut p = 0;
+                        let mut _ids: Vec<Index> = Vec::new();
+                        _ids.extend(ids);
+                        _ids.extend(idsj);
+                        for id in &_ids {
+                            if l.contains_key(id) {
+                                continue;
+                            }
+                            if p < idxs.len() {
+                                // NB: this creates zero entries for placeholders that we remove later.
+                                // The upshot of doing it that way is to avoid having to specify placeholders
+                                // multiple times when omitting voters present in both halves of
+                                // a joint config.
+                                l.insert(*id, idxs[p]);
+                                p += 1;
+                            }
                         }
-                        if p < idxs.len() {
-                            // NB: this creates zero entries for placeholders that we remove later.
-                            // The upshot of doing it that way is to avoid having to specify placeholders
-                            // multiple times when omitting voters present in both halves of
-                            // a joint config.
-                            l.insert(*id, idxs[p]);
-                            p += 1;
-                        }
-                    }
 
-                    // zero entries are created by _ placeholders; we don't want
-                    // them in the lookuper because "no entry" is different from
-                    // "zero entry". Note that we prevent tests from specifying
-                    // zero commit Indexes, so that there's no confusion between
-                    // the two concepts.
-                    l.retain(|_, val| *val != 0);
-                    l
-                };
+                        // zero entries are created by _ placeholders; we don't want
+                        // them in the lookuper because "no entry" is different from
+                        // "zero entry". Note that we prevent tests from specifying
+                        // zero commit Indexes, so that there's no confusion between
+                        // the two concepts.
+                        l.retain(|_, val| *val != 0);
+                        l
+                    };
 
                 if data.cmd == "vote" {
                     let mut joint_config = JointConfig::new();
                     joint_config.incoming = c.clone();
                     joint_config.outgoing = cj.clone();
                     let voters = joint_config.ids();
-                    assert_eq!(voters.len(), votes.len(), "mismatch input (explicit for _) fro votes {:?}: {:?}", voters, votes);
+                    assert_eq!(
+                        voters.len(),
+                        votes.len(),
+                        "mismatch input (explicit for _) fro votes {:?}: {:?}",
+                        voters,
+                        votes
+                    );
                 }
 
                 let mut buf = String::new();
@@ -158,20 +169,31 @@ mod tests {
                             // result. If not, print to the output.
                             let a_idx = alternative_majority_committed_index(c.clone(), &l);
                             if a_idx != idx {
-                                buf.write_str(format!("{} <-- via alternative computation\n", a_idx).as_str());
+                                buf.write_str(
+                                    format!("{} <-- via alternative computation\n", a_idx).as_str(),
+                                );
                             }
                             // Joining a majority with the empty majority should give same result.
-                            let a_idx = JointConfig::new2(c.clone(), MajorityConfig::new()).committed(&l);
+                            let a_idx =
+                                JointConfig::new2(c.clone(), MajorityConfig::new()).committed(&l);
                             if a_idx != idx {
-                                buf.write_str(format!("{} >-- via zero-joint quorum\n", a_idx).as_str());
+                                buf.write_str(
+                                    format!("{} >-- via zero-joint quorum\n", a_idx).as_str(),
+                                );
                             }
                             // Joining a majority with it self should give the same result.
                             let a_idx = JointConfig::new2(c.clone(), c.clone()).committed(&l);
                             if a_idx != idx {
-                                buf.write_str(format!("{} >-- via self-joint quorum\n", a_idx).as_str());
+                                buf.write_str(
+                                    format!("{} >-- via self-joint quorum\n", a_idx).as_str(),
+                                );
                             }
 
-                            let overlay = |c: MajorityConfig, l: &AckedIndexer, id: u64, idx: Index| -> MapAckIndexer {
+                            let overlay = |c: MajorityConfig,
+                                           l: &dyn AckedIndexer,
+                                           id: u64,
+                                           idx: Index|
+                             -> MapAckIndexer {
                                 let mut ll = MapAckIndexer::new();
                                 for iid in c.iter() {
                                     if *iid == id {
@@ -191,13 +213,18 @@ mod tests {
                                     let lo = overlay(c.clone(), &l, *id, iidx - 1);
                                     let a_idx = c.committed_index(&lo);
                                     if a_idx != idx {
-                                        buf.write_str(format!("{} <-- overlaying {}-->{}", a_idx, id, iidx).as_str());
+                                        buf.write_str(
+                                            format!("{} <-- overlaying {}-->{}", a_idx, id, iidx)
+                                                .as_str(),
+                                        );
                                     }
 
                                     let lo = overlay(c.clone(), &l, *id, 0);
                                     let a_idx = c.committed_index(&lo);
                                     if a_idx != idx {
-                                        buf.write_str(format!("{} <-- overlaying {}-->0", a_idx, id).as_str());
+                                        buf.write_str(
+                                            format!("{} <-- overlaying {}-->0", a_idx, id).as_str(),
+                                        );
                                     }
                                 }
                             }
@@ -216,7 +243,10 @@ mod tests {
                     }
                     "vote" => {
                         let ll = make_lookuper(&votes, &ids, &idsj);
-                        println!("ids: {:?}, idsj: {:?}, votes: {:?}, ll: {:?}", ids, idsj, votes, ll);
+                        println!(
+                            "ids: {:?}, idsj: {:?}, votes: {:?}, ll: {:?}",
+                            ids, idsj, votes, ll
+                        );
                         let mut l = HashMap::new();
                         for (id, v) in ll.iter() {
                             l.insert(*id, *v != 1); // NB: 1 == false, 2 == true
