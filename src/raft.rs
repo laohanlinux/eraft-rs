@@ -2143,19 +2143,13 @@ impl<S: Storage> Raft<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts};
+    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts, read_message};
     use crate::raft::Raft;
     use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use bytes::Bytes;
     use protobuf::RepeatedField;
-
-    fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
-        let msg = raft.msgs.clone();
-        raft.msgs.clear();
-        msg
-    }
 
     // Ensures:
     // 1. `MsgApp` fill the sending windows until full
