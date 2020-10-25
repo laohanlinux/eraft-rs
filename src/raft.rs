@@ -2143,9 +2143,9 @@ impl<S: Storage> Raft<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts, read_message};
+    use crate::mock::{new_test_raw_node, read_message, MockEntry, MocksEnts};
     use crate::raft::Raft;
-    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
+    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgHeartbeatResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use bytes::Bytes;
@@ -2262,6 +2262,84 @@ mod tests {
                     msg.set_entries(MocksEnts::from("somedata").into());
                 }
             }
+        }
+    }
+
+    // Ensure a heartbeat response
+    // frees one slot if the window is full
+    #[test]
+    fn msg_app_flow_control_recv_heartbeat() {
+        flexi_logger::Logger::with_env().start();
+        let raft = new_test_raw_node(0x1, vec![0x1, 0x2], 5, 1, SafeMemStorage::new());
+        let mut wl_raft = raft.wl();
+        wl_raft.raft.become_candidate();
+        wl_raft.raft.become_leader();
+
+        // force the progress to be in replicate state
+        wl_raft
+            .raft
+            .prs
+            .progress
+            .must_get_mut(&0x2)
+            .become_replicate();
+        // fill in the inflights window
+        for i in 0..wl_raft.raft.prs.max_inflight {
+            let mut msg = Message::new();
+            msg.set_from(0x1);
+            msg.set_to(0x1);
+            msg.set_field_type(MsgProp);
+            msg.set_entries(MocksEnts::from("somedata").into());
+            assert!(wl_raft.step(msg).is_ok());
+            read_message(&mut wl_raft.raft);
+        }
+
+        for tt in 1..5 {
+            let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
+            assert!(!full, "{}: inflights.full = {}, want {}", tt, full, true);
+
+            // recv tt `MsgHeartbeatResp` and expect one free slot
+            for i in 0..tt {
+                let mut msg = Message::new();
+                msg.set_from(0x2);
+                msg.set_to(0x1);
+                msg.set_field_type(MsgHeartbeatResp);
+                assert!(wl_raft.step(msg).is_ok());
+                let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
+                assert!(
+                    full,
+                    "{}.{}: inflights.full = {}, want {}",
+                    tt, i, full, false
+                );
+            }
+            // one slot
+            let mut msg = Message::new();
+            msg.set_from(0x1);
+            msg.set_to(0x1);
+            msg.set_field_type(MsgProp);
+            msg.set_entries(MocksEnts::from("somedata").into());
+            assert!(wl_raft.step(msg).is_ok());
+            let ms = read_message(&mut wl_raft.raft);
+            assert_eq!(ms.len(), 1, "{}: free slot=0, want 1", tt);
+
+            // and just one slot
+            for i in 0..10 {
+                let mut msg = Message::new();
+                msg.set_from(0x1);
+                msg.set_to(0x1);
+                msg.set_field_type(MsgProp);
+                msg.set_entries(MocksEnts::from("somedata").into());
+                assert!(wl_raft.step(msg).is_ok());
+                let ms1 = read_message(&mut wl_raft.raft);
+                assert_eq!(ms1.len(), 0, "{}.{}: ms.len = {}, want 0", tt, i, ms1.len());
+            }
+
+            // clear all pending messages.
+            let mut msg = Message::new();
+            msg.set_from(0x2);
+            msg.set_to(0x1);
+            msg.set_field_type(MsgHeartbeatResp);
+            assert!(wl_raft.step(msg).is_ok());
+            read_message(&mut wl_raft.raft);
         }
     }
 }
