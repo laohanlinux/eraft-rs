@@ -2008,6 +2008,11 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_heartbeat_resp(&mut self, m: Message) -> Result<(), RaftError> {
+        info!(
+            "heartbeat call back, from:{:0x}, to: {:0x}",
+            m.get_from(),
+            m.get_to()
+        );
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         pr.recent_active = true;
         pr.probe_sent = false;
@@ -2295,7 +2300,7 @@ mod tests {
 
         for tt in 1..5 {
             let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
-            assert!(!full, "{}: inflights.full = {}, want {}", tt, full, true);
+            assert!(full, "{}: inflights.full = {}, want {}", tt, full, true);
 
             // recv tt `MsgHeartbeatResp` and expect one free slot
             for i in 0..tt {
@@ -2304,9 +2309,10 @@ mod tests {
                 msg.set_to(0x1);
                 msg.set_field_type(MsgHeartbeatResp);
                 assert!(wl_raft.step(msg).is_ok());
+                read_message(&mut wl_raft.raft);
                 let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
-                assert!(
-                    full,
+                assert_eq!(
+                    full, false,
                     "{}.{}: inflights.full = {}, want {}",
                     tt, i, full, false
                 );
