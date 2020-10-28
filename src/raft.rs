@@ -544,7 +544,8 @@ impl<S: Storage> Raft<S> {
     // ("empty" messages are useful to convey updated Commit indexes, but
     // are undesirable when we're sending multiple messages in a batch).
     fn maybe_send_append(&mut self, to: u64, send_if_empty: bool) -> bool {
-        let pr = self.prs.progress.get_mut(&to).unwrap();
+        debug!("execute maybe_send_append, to: {}, send_if_empty: {}", to, send_if_empty);
+        let pr = self.prs.progress.must_get_mut(&to);
         if pr.is_paused() {
             return false;
         }
@@ -553,6 +554,7 @@ impl<S: Storage> Raft<S> {
             ..Default::default()
         };
 
+        // get the last log term because `pr.next` is next index, so `lasted = next - 1`
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
         if ents.as_ref().unwrap().is_empty() && !send_if_empty {
@@ -609,7 +611,9 @@ impl<S: Storage> Raft<S> {
             let term = term.unwrap();
             let ents = ents.unwrap();
             m.field_type = MsgApp;
+            // msg.index is the current node lasted index, so `sub - 1`
             m.index = pr.next - 1;
+            // msg.logTerm is the current node lasted term.
             m.logTerm = term;
             m.entries = RepeatedField::from_vec(ents);
             m.commit = self.raft_log.committed;
@@ -618,7 +622,7 @@ impl<S: Storage> Raft<S> {
                 match &pr.state {
                     state::StateType::Replicate => {
                         // optimistically increase the next when in StateReplicate
-                        let last = m.entries.first().unwrap().get_Index();
+                        let last = m.entries.last().unwrap().get_Index();
                         pr.optimistic_update(last);
                         pr.inflights.add(last);
                     }
@@ -2010,10 +2014,10 @@ impl<S: Storage> Raft<S> {
     fn callback_heartbeat_resp(&mut self, m: Message) -> Result<(), RaftError> {
         info!(
             "heartbeat call back, from:{:0x}, to: {:0x}",
-            m.get_from(),
-            m.get_to()
+            m.from,
+            m.to
         );
-        let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
+        let pr = self.prs.progress.must_get_mut(&m.from);
         pr.recent_active = true;
         pr.probe_sent = false;
         // free on slot for the full inflights windows to allow progress
@@ -2028,7 +2032,7 @@ impl<S: Storage> Raft<S> {
         }
         if self.prs.config.voters.vote_result(
             self.read_only
-                .recv_ack(m.get_from(), m.get_context().to_vec())
+                .recv_ack(m.from, m.get_context().to_vec())
                 .unwrap(),
         ) != VoteWon
         {

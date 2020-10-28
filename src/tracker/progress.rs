@@ -144,8 +144,8 @@ impl Progress {
         update
     }
 
-    // OptimisticUpdate signals the appends all the way up to and including index n
-    // are in-flight. As a result. Next is increased to n + 1
+    /// OptimisticUpdate signals the appends all the way up to and including index n
+    /// are in-flight. As a result. `Next` is increased to `n + 1`
     pub fn optimistic_update(&mut self, n: u64) {
         self.next = n + 1;
     }

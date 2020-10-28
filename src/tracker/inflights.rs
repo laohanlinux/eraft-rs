@@ -1,3 +1,5 @@
+use nom::lib::std::fmt::{Display, Formatter};
+
 // Inflights limits the number of MsgApp(represented by the largest index
 // contained within) sent to followers but not yet acknowledged by them. Callers
 // use Full() to check whether more messages can be sent, call Add() whenever
@@ -14,6 +16,12 @@ pub struct Inflights {
     // buffer contains the index of the last entry
     // inside one message
     buffer: Vec<u64>,
+}
+
+impl Display for Inflights {
+    fn fmt(&self, f: &mut Formatter<'_>) -> ::std::fmt::Result {
+        write!(f, "start:{}, count:{}, size:{}, is_full: {}, buffer:{:?}", self.start, self.count, self.size, self.full(), self.buffer)
+    }
 }
 
 impl Inflights {
@@ -45,13 +53,13 @@ impl Inflights {
         self.buffer[next] = inflight;
         self.count += 1;
         if self.full() {
-            info!("has full {}", self.count());
+            info!("[has full {}]", self.count());
         }
     }
 
-    // grow the inflight buffer by doubling up tp inflights.size. We grow on demand
-    // instead of preallocating to inflights.size to handle system which have
-    // thousands of Raft groups per process.
+    /// The inflight buffer by doubling up tp `inflights.size`. We grow on demand
+    /// instead of preallocating to `inflights.size` to handle system which have
+    /// thousands of Raft groups per process.
     pub fn grow(&mut self) {
         let mut new_size = self.buffer.len() * 2;
         if new_size == 0 {
@@ -64,7 +72,7 @@ impl Inflights {
         self.buffer = new_buffer;
     }
 
-    // FreeLe frees the inflights smaller or equal to the given `to` flight.
+    /// Frees the inflights smaller or equal to the given `to` flight.
     pub fn free_le(&mut self, to: u64) {
         if self.count == 0 || to < self.buffer[self.start] {
             // out of the left side of the window
@@ -95,11 +103,11 @@ impl Inflights {
         }
     }
 
-    // FreeFirstOne releases the first inflight. This is a no-op if nothing is
-    // inflight.
+    // FreeFirstOne releases the first inflight. This is a no-op if nothing is inflight.
     pub fn free_first_one(&mut self) {
+        info!("before free first one msg, {}", self);
         self.free_le(self.buffer[self.start]);
-        info!("free first one msg, is full: {}", self.full());
+        info!("after free first one msg, {}", self);
     }
 
     pub fn full(&self) -> bool {
