@@ -143,6 +143,7 @@ mod tests {
         let raft = new_test_raw_node(0x1, vec![0x1, 0x2], 5, 1, SafeMemStorage::new());
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
+        // NOTE: the first index entry log is config change for leader 0x1
         wl_raft.raft.become_leader();
 
         // force the progress to be in replicate state
@@ -163,6 +164,8 @@ mod tests {
             }).is_ok());
             read_message(&mut wl_raft.raft);
         }
+        // Inflights { start: 0, count: 7, size: 8, buffer: [2, 3, 4, 5, 6, 7, 8, 0] }
+        debug!("the last inflights=> {:?}", &wl_raft.raft.prs.progress.must_get(&0x2).inflights);
 
         for tt in 1..5 {
             let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
@@ -176,7 +179,6 @@ mod tests {
                     field_type: MsgHeartbeatResp,
                     ..Default::default()
                 };
-                info!("((((((((()))))))))))))))))");
                 assert!(wl_raft.step(msg).is_ok());
                 read_message(&mut wl_raft.raft);
                 let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
@@ -186,6 +188,7 @@ mod tests {
                     "{}.{}: inflights.full = {}, want {}",
                     tt, i, full, false
                 );
+                debug!("⚡️ update inflights=> {:?}", &wl_raft.raft.prs.progress.must_get(&0x2).inflights);
             }
 
             // one slot
@@ -215,7 +218,7 @@ mod tests {
             }
 
             // clear all pending messages.
-            let mut msg = Message{
+            let mut msg = Message {
                 from: 0x2,
                 to: 0x1,
                 field_type: MsgHeartbeatResp,
