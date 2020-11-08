@@ -155,17 +155,22 @@ mod tests {
             .become_replicate();
         // fill in the inflights window
         for i in 0..wl_raft.raft.prs.max_inflight {
-            assert!(wl_raft.step(Message {
-                from: 0x1,
-                to: 0x1,
-                field_type: MsgProp,
-                entries: MocksEnts::from("somedata").into(),
-                ..Default::default()
-            }).is_ok());
+            assert!(wl_raft
+                .step(Message {
+                    from: 0x1,
+                    to: 0x1,
+                    field_type: MsgProp,
+                    entries: MocksEnts::from("somedata").into(),
+                    ..Default::default()
+                })
+                .is_ok());
             read_message(&mut wl_raft.raft);
         }
         // Inflights { start: 0, count: 7, size: 8, buffer: [2, 3, 4, 5, 6, 7, 8, 0] }
-        debug!("the last inflights=> {:?}", &wl_raft.raft.prs.progress.must_get(&0x2).inflights);
+        debug!(
+            "the last inflights=> {:?}",
+            &wl_raft.raft.prs.progress.must_get(&0x2).inflights
+        );
 
         for tt in 1..5 {
             let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
@@ -188,7 +193,10 @@ mod tests {
                     "{}.{}: inflights.full = {}, want {}",
                     tt, i, full, false
                 );
-                debug!("⚡️ update inflights=> {:?}", &wl_raft.raft.prs.progress.must_get(&0x2).inflights);
+                debug!(
+                    "⚡️ update inflights=> {:?}",
+                    &wl_raft.raft.prs.progress.must_get(&0x2).inflights
+                );
             }
 
             // one slot

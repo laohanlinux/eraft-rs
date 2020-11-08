@@ -463,7 +463,7 @@ mod tests {
         let ents = vec![new_entry(3, 3), new_entry(4, 4), new_entry(5, 5)];
         let mut s = MemoryStorage::new_with_entries(ents);
         assert_eq!(s.last_index(), Ok(5));
-        s.append(vec![new_entry(6, 6)]);
+        s.append(vec![new_entry(6, 6)]).unwrap();
         assert_eq!(s.last_index(), Ok(6));
     }
 

@@ -484,10 +484,10 @@ mod tests {
     #[test]
     fn t_raw_node_step() {
         flexi_logger::Logger::with_env().start();
-        let msgType = (0..MessageType::MsgPreVoteResp.value())
+        let msg_type = (0..MessageType::MsgPreVoteResp.value())
             .map(|id| MessageType::from_i32(id).unwrap())
             .collect::<Vec<_>>();
-        for (_, msgt) in msgType.iter().enumerate() {
+        for (_, msgt) in msg_type.iter().enumerate() {
             let mut s = new_memory();
             let mut hard_state = HardState::new();
             hard_state.set_term(1);
@@ -623,7 +623,7 @@ mod tests {
             let mut s = new_memory();
             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
             {
-                raw_node.wl().campaign();
+                raw_node.wl().campaign().unwrap();
             }
             let mut proposed = false;
             let mut last_index = 0;
@@ -634,7 +634,7 @@ mod tests {
             let mut core_node = raw_node.wl();
             while cs.is_none() {
                 let ready = core_node.ready();
-                s.wl().append(ready.entries.clone()); // persistent entries
+                s.wl().append(ready.entries.clone()).unwrap(); // persistent entries
                 for ent in ready.committed_entries.iter() {
                     if ent.get_Type() == EntryConfChange {
                         let mut cc: ConfChange = parse_from_bytes(ent.get_Data()).unwrap();
@@ -650,11 +650,11 @@ mod tests {
                     assert!(core_node.propose(Bytes::from("somedata")).is_ok());
                     if let Some(ccv1) = cc.as_v1() {
                         cc_data = ccv1.write_to_bytes().unwrap();
-                        core_node.propose_conf_change(ccv1.clone());
+                        core_node.propose_conf_change(ccv1.clone()).unwrap();
                     } else {
                         let ccv2 = cc.as_v2();
                         cc_data = ccv2.write_to_bytes().unwrap();
-                        core_node.propose_conf_change(ccv2);
+                        core_node.propose_conf_change(ccv2).unwrap();
                     }
                     proposed = true;
                 }
