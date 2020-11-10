@@ -37,7 +37,7 @@ pub struct Progress {
     // index of the snapshot. If pendingSnapshot is set, the replication process of
     // this Progress will be paused. raft will not resend snapshot until the pending one
     // is reported to be failed.
-    pending_snapshot: u64,
+    pub(crate) pending_snapshot: u64,
 
     // recent_active is true if the progress is recently active. Receiving any messages
     // from the corresponds follower indicates the progress is active.

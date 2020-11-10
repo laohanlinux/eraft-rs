@@ -557,7 +557,7 @@ impl<S: Storage> Raft<S> {
         // get the last log term because `pr.next` is next index, so `lasted = next - 1`
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
-        if ents.as_ref().unwrap().is_empty() && !send_if_empty {
+        if ents.as_ref().map_or_else(|_| true, |ents| ents.is_empty()) && !send_if_empty {
             return false;
         }
         if term.is_err() || ents.is_err() {
@@ -1309,7 +1309,7 @@ impl<S: Storage> Raft<S> {
     // recovers the state machine from a snapshot. It restores the log and the
     // configuration of state machine. If this method returns false, the snapshot was
     // ignored, either because it was obsolete or because of an error.
-    fn restore(&mut self, s: &Snapshot) -> bool {
+    pub(crate) fn restore(&mut self, s: &Snapshot) -> bool {
         if s.get_metadata().get_index() <= self.raft_log.committed {
             return false;
         }
@@ -2059,7 +2059,7 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_snapshot_status(&mut self, m: Message) -> Result<(), RaftError> {
-        let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
+        let pr = self.prs.progress.must_get_mut(&m.get_from());
         if pr.state != ProgressStateType::Snapshot {
             return Ok(());
         }
@@ -2067,7 +2067,7 @@ impl<S: Storage> Raft<S> {
         // MsgAppResp above. In fact, the code there is more correct than the
         // code here and should likely be updated to match (or even better, the
         // logic pulled into a newly created Progress state machine handler).
-        if !m.get_reject() {
+        if !m.reject {
             pr.become_probe();
             info!(
                 "{:#x} snapshot succeeded, resumed sending replication messages to {:#x} [{}]",
@@ -2078,7 +2078,15 @@ impl<S: Storage> Raft<S> {
         } else {
             // NB: the order here matters or we'll be probing erroneously from
             // the snapshot index, but the snapshot never applied.
+            pr.pending_snapshot = 0;
+            pr.become_probe();
+            debug!("{:0x} snapshot failed, resumed sending replication message to {:0x} [{:?}]", self.id, m.from, pr);
         }
+
+        // If snapshot finished, wait for the MsgAppResp from the remote node before sending
+        // out the next MsgApp.
+        // If snapshot failure, wait for a heartbeat interval before next try
+        pr.probe_sent = true;
         Ok(())
     }
 
