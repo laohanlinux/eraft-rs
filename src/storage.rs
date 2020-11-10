@@ -125,12 +125,12 @@ impl MemoryStorage {
     // can be used to reconstruct the state at that point.
     // If any configuration changes have been made since the last compaction,
     // the result of the last ApplyConfigChange must be passed in.
-    pub fn create_snapshot(
+    pub fn create_snapshot<T>(
         &mut self,
         i: u64,
-        cs: Option<ConfState>,
+        cs: T,
         data: Bytes,
-    ) -> Result<Snapshot, StorageError> {
+    ) -> Result<Snapshot, StorageError> where T: Into<Option<ConfState>> {
         if i <= self.snapshot.get_metadata().get_index() {
             return Err(StorageError::SnapshotOfDate);
         }
@@ -146,6 +146,7 @@ impl MemoryStorage {
         self.snapshot
             .mut_metadata()
             .set_term(self.ents[(i - offset) as usize].get_Term());
+        let cs = cs.into();
         if cs.is_some() {
             // TODO: what is it
             self.snapshot.mut_metadata().set_conf_state(cs.unwrap());
@@ -558,7 +559,7 @@ mod tests {
 
         for (i, tt) in tests.iter().enumerate() {
             let mut s = MemoryStorage::new_with_entries(ents.clone());
-            match s.create_snapshot(tt.i, Some(cs.clone()), data.clone()) {
+            match s.create_snapshot(tt.i, cs.clone(), data.clone()) {
                 Ok(snapshot) => {
                     assert_eq!(snapshot, tt.w_snap);
                 }

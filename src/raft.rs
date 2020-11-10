@@ -642,7 +642,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // send_heartbeat sends a heartbeat RPC to the given peer.
-    fn send_heartbeat(&mut self, to: u64, ctx: Option<Vec<u8>>) {
+    fn send_heartbeat<T: Into<Option<Vec<u8>>>>(&mut self, to: u64, ctx: T) {
         // Attach the commit as min(to.matched, self.committed).
         // When the leader sends out heartbeat message,
         // the receiver(follower) might not be matched with the leader.
@@ -662,7 +662,7 @@ impl<S: Storage> Raft<S> {
             commit,
             ..Default::default()
         };
-        if let Some(ctx) = ctx {
+        if let Some(ctx) = ctx.into() {
             m.context = Bytes::from(ctx);
         }
         self.send(m);

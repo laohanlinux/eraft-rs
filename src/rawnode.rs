@@ -306,8 +306,8 @@ impl<S: Storage> RawCoreNode<S> {
     /// WithProgress is a helper to introspect the Progress for this node and its
     /// peers.
     pub fn with_progress<F>(&mut self, mut visitor: F)
-    where
-        F: FnMut(u64, ProgressType, &mut Progress),
+        where
+            F: FnMut(u64, ProgressType, &mut Progress),
     {
         // self.raft.prs.visit()
         self.raft.prs.visit(|id, pr| {
@@ -574,7 +574,7 @@ mod tests {
                     vec![(ConfChangeAddLearnerNode, 2)],
                     Some(ConfChangeTransitionJointImplicit),
                 ),
-                new_conf_state(vec![1], vec![1], vec![2], Some(true)),
+                new_conf_state(vec![1], vec![1], vec![2], true),
                 Some(new_conf_state(vec![1], vec![], vec![2], None)),
             ),
             // Add a new node and demote n1. This exercises the interesting case in
@@ -588,7 +588,7 @@ mod tests {
                     ],
                     None,
                 ),
-                new_conf_state2(vec![2], vec![1], vec![3], vec![1], Some(true)),
+                new_conf_state2(vec![2], vec![1], vec![3], vec![1], true),
                 Some(new_conf_state(vec![2], vec![], vec![1, 3], None)),
             ),
             // Ditto explicit.
@@ -614,7 +614,7 @@ mod tests {
                     ],
                     Some(ConfChangeTransitionJointImplicit),
                 ),
-                new_conf_state2(vec![2], vec![1], vec![3], vec![1], Some(true)),
+                new_conf_state2(vec![2], vec![1], vec![3], vec![1], true),
                 Some(new_conf_state(vec![2], vec![], vec![1, 3], None)),
             ),
         ];
@@ -799,34 +799,36 @@ mod tests {
         Box::new(cc)
     }
 
-    fn new_conf_state(
+    fn new_conf_state<T: Into<Option<bool>>>(
         voters: Vec<u64>,
         outgoing: Vec<u64>,
         learners: Vec<u64>,
-        auto_leave: Option<bool>,
+        auto_leave: T,
     ) -> ConfState {
         let mut conf_state = ConfState::new();
         conf_state.set_voters(voters);
         conf_state.set_learners(learners);
         conf_state.set_voters_outgoing(outgoing);
+        let auto_leave = auto_leave.into();
         if auto_leave.is_some() {
             conf_state.set_auto_leave(auto_leave.unwrap());
         }
         conf_state
     }
 
-    fn new_conf_state2(
+    fn new_conf_state2<T: Into<Option<bool>>>(
         voters: Vec<u64>,
         outgoing: Vec<u64>,
         learners: Vec<u64>,
         next_learners: Vec<u64>,
-        auto_leave: Option<bool>,
+        auto_leave: T,
     ) -> ConfState {
         let mut conf_state = ConfState::new();
         conf_state.set_voters(voters);
         conf_state.set_learners(learners);
         conf_state.set_voters_outgoing(outgoing);
         conf_state.set_learners_next(next_learners);
+        let auto_leave = auto_leave.into();
         if auto_leave.is_some() {
             conf_state.set_auto_leave(auto_leave.unwrap());
         }
