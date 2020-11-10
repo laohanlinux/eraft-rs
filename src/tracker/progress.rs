@@ -114,23 +114,23 @@ impl Progress {
         }
     }
 
-    // Become Replicate transaction into StateReplicate, resetting Next to _match + 1
+    /// Become Replicate transaction into StateReplicate, resetting Next to _match + 1
     pub fn become_replicate(&mut self) {
         self.reset_state(StateType::Replicate);
         self.next = self._match + 1;
         info!("become replicate");
     }
 
-    // BecomeSnapshot moves that Progress to StateSnapshot with the specified pending
-    // snapshot
+    /// BecomeSnapshot moves that Progress to StateSnapshot with the specified pending
+    /// snapshot
     pub fn become_snapshot(&mut self, snapshot: u64) {
         self.reset_state(StateType::Snapshot);
         self.pending_snapshot = snapshot;
     }
 
-    // maybe_update is called when an MsgAppResp arrives from the follower, with the
-    // index acked by it. The method returns false if the given n index comes of from
-    // an outdated message. Otherwise it updates the progress and return true.
+    /// maybe_update is called when an MsgAppResp arrives from the follower, with the
+    /// index acked by it. The method returns false if the given n index comes of from
+    /// an outdated message. Otherwise it updates the progress and return true.
     pub fn maybe_update(&mut self, n: u64) -> bool {
         let mut update = false;
         if self._match < n {
@@ -150,17 +150,17 @@ impl Progress {
         self.next = n + 1;
     }
 
-    // MaybeDecrTo adjust the Progress to the receipt of a MsgApp rejection. The
-    // arguments are the index the follower rejected to append to its log, and its
-    // last index.
-    //
-    // rejecteds can happen spuriously as messages are sent out of order or
-    // duplicated. In such cases, the rejection pertains to an index that the
-    // Progress already knows were previously acknowledged, and false is returned
-    // without changing the Progress.
-    //
-    // If the rejection is genuine, Next is lowered sensibly, and the Progress is
-    // cleared for sending log entries
+    /// MaybeDecrTo adjust the Progress to the receipt of a MsgApp rejection. The
+    /// arguments are the index the follower rejected to append to its log, and its
+    /// last index.
+    ///
+    /// rejecteds can happen spuriously as messages are sent out of order or
+    /// duplicated. In such cases, the rejection pertains to an index that the
+    /// Progress already knows were previously acknowledged, and false is returned
+    /// without changing the Progress.
+    ///
+    /// If the rejection is genuine, Next is lowered sensibly, and the Progress is
+    /// cleared for sending log entries
     pub fn maybe_decr_to(&mut self, rejected: u64, last: u64) -> bool {
         if self.state == Replicate {
             // The rejected must be stale if the progress has matched and "rejected"
@@ -191,12 +191,12 @@ impl Progress {
         true
     }
 
-    // IsPaused return whether sending log entries to this node has been throttled.
-    // This is done when a node has rejected recent MsgApp, is currently waiting
-    // for a snapshot, or has reached the MaxInflightMsgs limit. In normal
-    // operation, this is false. A throttled node will be contacted less frequently
-    // until it has reached a state in which it's able to accept a steady stream of
-    // log entries again.
+    /// Return whether sending log entries to this node has been throttled.
+    /// This is done when a node has rejected recent MsgApp, is currently waiting
+    /// for a snapshot, or has reached the MaxInflightMsgs limit. In normal
+    /// operation, this is false. A throttled node will be contacted less frequently
+    /// until it has reached a state in which it's able to accept a steady stream of
+    /// log entries again.
     pub fn is_paused(&self) -> bool {
         match self.state {
             StateType::Probe => self.probe_sent,

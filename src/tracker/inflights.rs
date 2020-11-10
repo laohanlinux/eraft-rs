@@ -105,9 +105,7 @@ impl Inflights {
 
     // FreeFirstOne releases the first inflight. This is a no-op if nothing is inflight.
     pub fn free_first_one(&mut self) {
-        info!("before free first one msg, {}", self);
         self.free_le(self.buffer[self.start]);
-        info!("after free first one msg, {}", self);
     }
 
     pub fn full(&self) -> bool {

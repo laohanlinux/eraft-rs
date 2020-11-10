@@ -560,7 +560,6 @@ impl<S: Storage> Raft<S> {
         if ents.as_ref().unwrap().is_empty() && !send_if_empty {
             return false;
         }
-
         if term.is_err() || ents.is_err() {
             // send snapshot if we failed to get term or entries
             if !pr.recent_active {
@@ -624,8 +623,8 @@ impl<S: Storage> Raft<S> {
                         // optimistically increase the next when in StateReplicate
                         let last = m.entries.last().unwrap().get_Index();
                         pr.optimistic_update(last);
-                        debug!("#{:0x} progress at replication, append to it for log entry, {:?}", to, pr.inflights);
                         pr.inflights.add(last);
+                        // debug!("#{:0x} progress at replication, append to it for log entry, {:?}, msg: {:?}", to, pr, m);
                     }
                     state::StateType::Probe => {
                         pr.probe_sent = true;
@@ -682,12 +681,6 @@ impl<S: Storage> Raft<S> {
                 );
             }
         }
-        //        self.prs.visit(|id, _| {
-        //            if id == c_id {
-        //                return;
-        //            }
-        //            self.send_append(id);
-        //        })
     }
 
     // sends RPC, without entries to all the peers.

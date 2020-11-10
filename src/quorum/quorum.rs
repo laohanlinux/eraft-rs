@@ -26,7 +26,7 @@ pub fn to_string(index: Index) -> String {
 }
 
 /// AckedIndexer allows looking up a commit index for a given ID of a voter
-/// from a correcsponding MajorityConfig.
+/// from a corresponding MajorityConfig.
 pub trait AckedIndexer {
     fn acked_index(&self, voter_id: &u64) -> Option<&Index>;
 }

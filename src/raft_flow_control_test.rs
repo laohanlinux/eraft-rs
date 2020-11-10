@@ -166,19 +166,13 @@ mod tests {
                 .is_ok());
             read_message(&mut wl_raft.raft);
         }
-        // Inflights { start: 0, count: 7, size: 8, buffer: [2, 3, 4, 5, 6, 7, 8, 0] }
-        debug!(
-            "the last inflights=> {:?}",
-            &wl_raft.raft.prs.progress.must_get(&0x2).inflights
-        );
 
         for tt in 1..5 {
             let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
             assert!(full, "{}: inflights.full = {}, want {}", tt, full, true);
-
             // recv tt `MsgHeartbeatResp` and expect one free slot
             for i in 0..tt {
-                let mut msg = Message {
+                let msg = Message {
                     from: 0x2,
                     to: 0x1,
                     field_type: MsgHeartbeatResp,
@@ -187,20 +181,15 @@ mod tests {
                 assert!(wl_raft.step(msg).is_ok());
                 read_message(&mut wl_raft.raft);
                 let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
-                info!("{:?}", wl_raft.raft.prs.progress.must_get(&0x2).inflights);
                 assert_eq!(
                     full, false,
                     "{}.{}: inflights.full = {}, want {}",
                     tt, i, full, false
                 );
-                debug!(
-                    "⚡️ update inflights=> {:?}",
-                    &wl_raft.raft.prs.progress.must_get(&0x2).inflights
-                );
             }
 
             // one slot
-            let mut msg = Message {
+            let msg = Message {
                 from: 0x1,
                 to: 0x1,
                 field_type: MsgProp,
@@ -209,9 +198,9 @@ mod tests {
             };
             assert!(wl_raft.step(msg).is_ok());
             let ms = read_message(&mut wl_raft.raft);
-            assert_eq!(ms.len(), 1, "{}: free slot=0, want 1", tt);
+            assert!(wl_raft.raft.prs.progress.must_get(&0x2).inflights.full(), "inflights.full = {}", false);
 
-            // and just one slot
+            // and just one slot and inflights is full.
             for i in 0..10 {
                 let mut msg = Message {
                     from: 0x1,
