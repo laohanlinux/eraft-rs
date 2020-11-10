@@ -306,8 +306,8 @@ impl<S: Storage> RawCoreNode<S> {
     /// WithProgress is a helper to introspect the Progress for this node and its
     /// peers.
     pub fn with_progress<F>(&mut self, mut visitor: F)
-    where
-        F: FnMut(u64, ProgressType, &mut Progress),
+        where
+            F: FnMut(u64, ProgressType, &mut Progress),
     {
         // self.raft.prs.visit()
         self.raft.prs.visit(|id, pr| {
@@ -484,10 +484,10 @@ mod tests {
     #[test]
     fn t_raw_node_step() {
         flexi_logger::Logger::with_env().start();
-        let msgType = (0..MessageType::MsgPreVoteResp.value())
+        let msg_type = (0..MessageType::MsgPreVoteResp.value())
             .map(|id| MessageType::from_i32(id).unwrap())
             .collect::<Vec<_>>();
-        for (_, msgt) in msgType.iter().enumerate() {
+        for (_, msgt) in msg_type.iter().enumerate() {
             let mut s = new_memory();
             let mut hard_state = HardState::new();
             hard_state.set_term(1);
@@ -574,7 +574,7 @@ mod tests {
                     vec![(ConfChangeAddLearnerNode, 2)],
                     Some(ConfChangeTransitionJointImplicit),
                 ),
-                new_conf_state(vec![1], vec![1], vec![2], Some(true)),
+                new_conf_state(vec![1], vec![1], vec![2], true),
                 Some(new_conf_state(vec![1], vec![], vec![2], None)),
             ),
             // Add a new node and demote n1. This exercises the interesting case in
@@ -588,7 +588,7 @@ mod tests {
                     ],
                     None,
                 ),
-                new_conf_state2(vec![2], vec![1], vec![3], vec![1], Some(true)),
+                new_conf_state2(vec![2], vec![1], vec![3], vec![1], true),
                 Some(new_conf_state(vec![2], vec![], vec![1, 3], None)),
             ),
             // Ditto explicit.
@@ -614,7 +614,7 @@ mod tests {
                     ],
                     Some(ConfChangeTransitionJointImplicit),
                 ),
-                new_conf_state2(vec![2], vec![1], vec![3], vec![1], Some(true)),
+                new_conf_state2(vec![2], vec![1], vec![3], vec![1], true),
                 Some(new_conf_state(vec![2], vec![], vec![1, 3], None)),
             ),
         ];
@@ -623,7 +623,7 @@ mod tests {
             let mut s = new_memory();
             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
             {
-                raw_node.wl().campaign();
+                raw_node.wl().campaign().unwrap();
             }
             let mut proposed = false;
             let mut last_index = 0;
@@ -634,7 +634,7 @@ mod tests {
             let mut core_node = raw_node.wl();
             while cs.is_none() {
                 let ready = core_node.ready();
-                s.wl().append(ready.entries.clone()); // persistent entries
+                s.wl().append(ready.entries.clone()).unwrap(); // persistent entries
                 for ent in ready.committed_entries.iter() {
                     if ent.get_Type() == EntryConfChange {
                         let mut cc: ConfChange = parse_from_bytes(ent.get_Data()).unwrap();
@@ -650,11 +650,11 @@ mod tests {
                     assert!(core_node.propose(Bytes::from("somedata")).is_ok());
                     if let Some(ccv1) = cc.as_v1() {
                         cc_data = ccv1.write_to_bytes().unwrap();
-                        core_node.propose_conf_change(ccv1.clone());
+                        core_node.propose_conf_change(ccv1.clone()).unwrap();
                     } else {
                         let ccv2 = cc.as_v2();
                         cc_data = ccv2.write_to_bytes().unwrap();
-                        core_node.propose_conf_change(ccv2);
+                        core_node.propose_conf_change(ccv2).unwrap();
                     }
                     proposed = true;
                 }
@@ -799,34 +799,36 @@ mod tests {
         Box::new(cc)
     }
 
-    fn new_conf_state(
+    fn new_conf_state<T: Into<Option<bool>>>(
         voters: Vec<u64>,
         outgoing: Vec<u64>,
         learners: Vec<u64>,
-        auto_leave: Option<bool>,
+        auto_leave: T,
     ) -> ConfState {
         let mut conf_state = ConfState::new();
         conf_state.set_voters(voters);
         conf_state.set_learners(learners);
         conf_state.set_voters_outgoing(outgoing);
+        let auto_leave = auto_leave.into();
         if auto_leave.is_some() {
             conf_state.set_auto_leave(auto_leave.unwrap());
         }
         conf_state
     }
 
-    fn new_conf_state2(
+    fn new_conf_state2<T: Into<Option<bool>>>(
         voters: Vec<u64>,
         outgoing: Vec<u64>,
         learners: Vec<u64>,
         next_learners: Vec<u64>,
-        auto_leave: Option<bool>,
+        auto_leave: T,
     ) -> ConfState {
         let mut conf_state = ConfState::new();
         conf_state.set_voters(voters);
         conf_state.set_learners(learners);
         conf_state.set_voters_outgoing(outgoing);
         conf_state.set_learners_next(next_learners);
+        let auto_leave = auto_leave.into();
         if auto_leave.is_some() {
             conf_state.set_auto_leave(auto_leave.unwrap());
         }

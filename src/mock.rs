@@ -1,10 +1,16 @@
-use crate::raft::{Config, ReadOnlyOption, NO_LIMIT};
+use crate::raft::{Config, ReadOnlyOption, NO_LIMIT, Raft};
 use crate::raft_log::RaftLog;
-use crate::raftpb::raft::{Entry, Snapshot};
+use crate::raftpb::raft::{Entry, Snapshot, Message};
 use crate::rawnode::SafeRawNode;
 use crate::storage::{MemoryStorage, SafeMemStorage, Storage};
 use bytes::Bytes;
 use protobuf::RepeatedField;
+
+pub fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
+    let msg = raft.msgs.clone();
+    raft.msgs.clear();
+    msg
+}
 
 pub struct MocksEnts(Entry);
 

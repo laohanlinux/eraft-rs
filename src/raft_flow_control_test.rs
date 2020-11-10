@@ -14,19 +14,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, MockEntry, MocksEnts};
+    use crate::mock::{new_test_raw_node, read_message, MockEntry, MocksEnts};
     use crate::raft::Raft;
-    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp};
+    use crate::raftpb::raft::MessageType::{MsgAppResp, MsgHeartbeatResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use bytes::Bytes;
     use protobuf::RepeatedField;
-
-    fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
-        let msg = raft.msgs.clone();
-        raft.msgs.clear();
-        msg
-    }
 
     // Ensures:
     // 1. `MsgApp` fill the sending windows until full
@@ -40,7 +34,7 @@ mod tests {
         wl_raft.raft.become_leader();
 
         {
-            let mut pr = wl_raft.raft.prs.progress.must_get_mut(&2);
+            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
             // force the progress to be in replicate state.
             pr.become_replicate();
         }
@@ -52,7 +46,7 @@ mod tests {
                 msg.to = 1;
                 msg.field_type = MsgProp;
                 msg.entries = MocksEnts::from("somedata").into();
-                assert!(wl_raft.step(msg).is_ok());
+                wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
             }
@@ -60,7 +54,7 @@ mod tests {
 
         // ensure 1
         {
-            let mut pr = wl_raft.raft.prs.progress.must_get_mut(&2);
+            let mut pr = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
             assert!(
                 pr.inflights.full(),
                 "inflights.full = {}, want: {}",
@@ -77,7 +71,7 @@ mod tests {
                 msg.to = 1;
                 msg.field_type = MsgProp;
                 msg.entries = MocksEnts::from("somedata").into();
-                assert!(wl_raft.step(msg).is_ok());
+                wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 0, "{}: len(ms) = {}, want: 1", i, msg.len());
             }
@@ -96,7 +90,7 @@ mod tests {
         wl_raft.raft.become_candidate();
         wl_raft.raft.become_leader();
         {
-            let mut pr2 = wl_raft.raft.prs.progress.must_get_mut(&2);
+            let mut pr2 = wl_raft.raft.prs.progress.get_mut(&2).unwrap();
             // force the progress to be in replicate state
             pr2.become_replicate();
         }
@@ -109,12 +103,12 @@ mod tests {
                 msg.to = 1;
                 msg.field_type = MsgProp;
                 msg.set_entries(MocksEnts::from("somedata").into());
-                assert!(wl_raft.step(msg).is_ok());
+                wl_raft.step(msg);
                 let msg = read_message(&mut wl_raft.raft);
                 assert_eq!(msg.len(), 1, "{}: len(ms) = {}, want: 1", i, msg.len());
             }
         }
-        info!("pr1: {:?}", wl_raft.raft.prs.progress);
+
         // 1 is noop, 2 is the first proposal we just sent.
         // so we start with 2.
         {
@@ -127,51 +121,98 @@ mod tests {
                     msg.field_type = MsgAppResp;
                     msg.index = tt;
                     assert!(wl_raft.step(msg).is_ok());
-                    read_message(&mut wl_raft.raft);
-                }
-
-                // fill in the inflights windows again.
-                {
-                    let mut msg = Message::new();
-                    msg.from = 1;
-                    msg.to = 1;
-                    msg.set_field_type(MsgProp);
-                    msg.set_entries(MocksEnts::from("somedata").into());
-                    assert!(wl_raft.raft.step(msg).is_ok());
-                    let msg = read_message(&mut wl_raft.raft);
-                    assert_eq!(msg.len(), 1, "{}: len={}, want 1", tt, msg.len());
-
-                    // ensure 1
-                    {
-                        let pr2 = wl_raft.raft.prs.progress.get(&2).unwrap();
-                        assert!(
-                            pr2.inflights.full(),
-                            "inflights.full = {}, want true",
-                            pr2.inflights.full()
-                        );
-                    }
-
-                    // ensure 2
-                    {
-                        for i in 0..tt {
-                            let mut msg = Message::new();
-                            msg.from = 2;
-                            msg.to = 1;
-                            msg.field_type = MsgAppResp;
-                            msg.index = i;
-                            assert!(wl_raft.step(msg).is_ok());
-                            let pr2 = wl_raft.raft.prs.progress.must_get(&2);
-                            assert!(
-                                pr2.inflights.full(),
-                                "{}: inflights.full={}, want {}",
-                                tt,
-                                pr2.inflights.full(),
-                                true
-                            );
-                        }
-                    }
                 }
             }
+        }
+    }
+
+    // Ensure a heartbeat response frees one slot if the window is full
+    #[test]
+    fn msg_app_flow_control_recv_heartbeat() {
+        flexi_logger::Logger::with_env().start();
+        let raft = new_test_raw_node(0x1, vec![0x1, 0x2], 5, 1, SafeMemStorage::new());
+        let mut wl_raft = raft.wl();
+        wl_raft.raft.become_candidate();
+        // NOTE: the first index entry log is config change for leader 0x1
+        wl_raft.raft.become_leader();
+
+        // force the progress to be in replicate state
+        wl_raft
+            .raft
+            .prs
+            .progress
+            .must_get_mut(&0x2)
+            .become_replicate();
+        // fill in the inflights window
+        for i in 0..wl_raft.raft.prs.max_inflight {
+            assert!(wl_raft
+                .step(Message {
+                    from: 0x1,
+                    to: 0x1,
+                    field_type: MsgProp,
+                    entries: MocksEnts::from("somedata").into(),
+                    ..Default::default()
+                })
+                .is_ok());
+            read_message(&mut wl_raft.raft);
+        }
+
+        for tt in 1..5 {
+            let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
+            assert!(full, "{}: inflights.full = {}, want {}", tt, full, true);
+            // recv tt `MsgHeartbeatResp` and expect one free slot
+            for i in 0..tt {
+                let msg = Message {
+                    from: 0x2,
+                    to: 0x1,
+                    field_type: MsgHeartbeatResp,
+                    ..Default::default()
+                };
+                assert!(wl_raft.step(msg).is_ok());
+                read_message(&mut wl_raft.raft);
+                let full = wl_raft.raft.prs.progress.must_get(&0x2).inflights.full();
+                assert_eq!(
+                    full, false,
+                    "{}.{}: inflights.full = {}, want {}",
+                    tt, i, full, false
+                );
+            }
+
+            // one slot
+            let msg = Message {
+                from: 0x1,
+                to: 0x1,
+                field_type: MsgProp,
+                entries: MocksEnts::from("somedata").into(),
+                ..Default::default()
+            };
+            assert!(wl_raft.step(msg).is_ok());
+            let ms = read_message(&mut wl_raft.raft);
+            assert!(wl_raft.raft.prs.progress.must_get(&0x2).inflights.full(), "inflights.full = {}", false);
+
+            // and just one slot and inflights is full.
+            for i in 0..10 {
+                let mut msg = Message {
+                    from: 0x1,
+                    to: 0x1,
+                    field_type: MsgProp,
+                    entries: MocksEnts::from("somedata").into(),
+                    ..Default::default()
+                };
+                assert!(wl_raft.step(msg).is_ok());
+                let ms1 = read_message(&mut wl_raft.raft);
+                assert_eq!(ms1.len(), 0, "{}.{}: ms.len = {}, want 0", tt, i, ms1.len());
+            }
+
+            // clear all pending messages.
+            let mut msg = Message {
+                from: 0x2,
+                to: 0x1,
+                field_type: MsgHeartbeatResp,
+                ..Default::default()
+            };
+            assert!(wl_raft.step(msg).is_ok());
+            read_message(&mut wl_raft.raft);
         }
     }
 }
