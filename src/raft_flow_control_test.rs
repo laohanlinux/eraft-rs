@@ -120,17 +120,7 @@ mod tests {
                     msg.to = 1;
                     msg.field_type = MsgAppResp;
                     msg.index = tt;
-                    wl_raft.step(msg);
-                    read_message(&mut wl_raft.raft);
-                }
-
-                // fill in the inflights windows again.
-                {
-                    let mut msg = Message::new();
-                    msg.from = 1;
-                    msg.to = 1;
-                    msg.set_field_type(MsgProp);
-                    msg.set_entries(MocksEnts::from("somedata").into());
+                    assert!(wl_raft.step(msg).is_ok());
                 }
             }
         }
