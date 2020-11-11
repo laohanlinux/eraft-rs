@@ -557,7 +557,8 @@ impl<S: Storage> Raft<S> {
         // get the last log term because `pr.next` is next index, so `lasted = next - 1`
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
-        if ents.as_ref().unwrap().is_empty() && !send_if_empty {
+        if ents.as_ref().map_or_else(|_| true, |ents| ents.is_empty()) && !send_if_empty {
+            debug!("ignore send append from, send_if_empty={}, to={:0x}", send_if_empty, m.to);
             return false;
         }
         if term.is_err() || ents.is_err() {
@@ -636,6 +637,7 @@ impl<S: Storage> Raft<S> {
                 }
             }
         }
+        // debug!("send append succeeded, msg: {:#?}", m);
         self.send(m);
         true
     }
@@ -879,8 +881,7 @@ impl<S: Storage> Raft<S> {
         // progress with the last index already.
         self.prs
             .progress
-            .get_mut(&self.id)
-            .unwrap()
+            .must_get_mut(&self.id)
             .become_replicate();
 
         // conservatively set the pending_config_index to the last index in the
@@ -1309,7 +1310,7 @@ impl<S: Storage> Raft<S> {
     // recovers the state machine from a snapshot. It restores the log and the
     // configuration of state machine. If this method returns false, the snapshot was
     // ignored, either because it was obsolete or because of an error.
-    fn restore(&mut self, s: &Snapshot) -> bool {
+    pub(crate) fn restore(&mut self, s: &Snapshot) -> bool {
         if s.get_metadata().get_index() <= self.raft_log.committed {
             return false;
         }
@@ -1352,7 +1353,7 @@ impl<S: Storage> Raft<S> {
             .match_term(s.get_metadata().get_index(), s.get_metadata().get_term())
         {
             info!(
-                "{:#x} [commit: {}, lastindex: {}, lastterm: {}] fast-forwarded commit to snapshot [index: {}, term: {}]",
+                "{:#x} [commit: {}, last_index: {}, last_term: {}] fast-forwarded commit to snapshot [index: {}, term: {}]",
                 self.id,
                 self.raft_log.committed,
                 self.raft_log.last_index(),
@@ -1384,7 +1385,7 @@ impl<S: Storage> Raft<S> {
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded
 
         info!(
-            "{:#x} [commit: {}, lastindex: {}, lastterm: {}] restored snapshot [index: {}, term: {}]",
+            "{:#x} [commit: {}, last_index: {}, last_term: {}] restored snapshot [index: {}, term: {}]",
             self.id,
             self.raft_log.committed,
             self.raft_log.last_index(),
@@ -1971,7 +1972,7 @@ impl<S: Storage> Raft<S> {
             }
             ProgressStateType::Replicate => {
                 debug!("free inflights, id: {:0x} {:?}", self.id, m);
-                pr.inflights.free_le(m.get_index());
+                pr.inflights.free_le(m.index);
             }
             _ => {}
         }
@@ -1982,7 +1983,7 @@ impl<S: Storage> Raft<S> {
         } else if old_paused {
             // If we were paused before, this node may be missing the
             // latest commit index, so send it.
-            self.send_append(m.get_from());
+            self.send_append(m.from);
         }
         // We've updated flow control information above, which may
         // allow us to send multiple (size-limited) in-flight messages
@@ -1990,16 +1991,18 @@ impl<S: Storage> Raft<S> {
         // replicate, or when freeTo() covers multiple messages). If
         // we have more entries to send, send as many messages as we
         // can (without sending empty messages for the commit index)
-        while self.maybe_send_append(m.get_from(), false) {}
-        let _match = self.prs.progress.get(&m.get_from()).unwrap()._match;
+        while self.maybe_send_append(m.from, false) {
+            warn!("trigger empty message at {:0x}", m.from);
+        }
+        let _match = self.prs.progress.must_get(&m.from)._match;
         // Transfer leadership is in progress.
-        if m.get_from() == self.lead_transferee && _match == self.raft_log.last_index() {
+        if m.from == self.lead_transferee && _match == self.raft_log.last_index() {
             info!(
                 "{:#x} sent MsgTimeoutNow to {:#x} after received MsgAppResp",
                 self.id,
                 m.get_from()
             );
-            self.send_timeout_now(m.get_from());
+            self.send_timeout_now(m.from);
         }
         Ok(())
     }
@@ -2059,7 +2062,7 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_snapshot_status(&mut self, m: Message) -> Result<(), RaftError> {
-        let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
+        let pr = self.prs.progress.must_get_mut(&m.get_from());
         if pr.state != ProgressStateType::Snapshot {
             return Ok(());
         }
@@ -2067,7 +2070,7 @@ impl<S: Storage> Raft<S> {
         // MsgAppResp above. In fact, the code there is more correct than the
         // code here and should likely be updated to match (or even better, the
         // logic pulled into a newly created Progress state machine handler).
-        if !m.get_reject() {
+        if !m.reject {
             pr.become_probe();
             info!(
                 "{:#x} snapshot succeeded, resumed sending replication messages to {:#x} [{}]",
@@ -2078,7 +2081,15 @@ impl<S: Storage> Raft<S> {
         } else {
             // NB: the order here matters or we'll be probing erroneously from
             // the snapshot index, but the snapshot never applied.
+            pr.pending_snapshot = 0;
+            pr.become_probe();
+            debug!("{:0x} snapshot failed, resumed sending replication message to {:0x} [{:?}]", self.id, m.from, pr);
         }
+
+        // If snapshot finished, wait for the MsgAppResp from the remote node before sending
+        // out the next MsgApp.
+        // If snapshot failure, wait for a heartbeat interval before next try
+        pr.probe_sent = true;
         Ok(())
     }
 
