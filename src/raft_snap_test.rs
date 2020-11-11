@@ -76,6 +76,55 @@ mod tests {
         assert!(raft.prs.progress.must_get(&0x2).probe_sent, "probe_sent = {}, want true", raft.prs.progress.must_get(&0x2).probe_sent);
     }
 
+    #[test]
+    fn snapshot_succeed() {
+        flexi_logger::Logger::with_env().start();
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
+        raft.restore(&new_testing_snap());
+
+        raft.become_candidate();
+        raft.become_leader();
+
+        raft.prs.progress.must_get_mut(&0x2).next = 2;
+        raft.prs.progress.must_get_mut(&0x2).become_snapshot(11);
+
+        raft.step(Message{from: 0x2, to: 0x1, field_type: MsgSnapStatus, reject: false, ..Default::default()});
+
+        let pending_snapshot = raft.prs.progress.must_get(&0x2).pending_snapshot;
+        assert_eq!(pending_snapshot, 0, "pending_snapshot = {}, want 0", pending_snapshot);
+        let next = raft.prs.progress.must_get(&0x2).next;
+        assert_eq!(next, 12, "next = {}, want 0", next);
+        let probe_sent = raft.prs.progress.must_get(&0x2).probe_sent;
+        assert!(probe_sent, "probe_sent={}, want false", probe_sent);
+    }
+
+    #[test]
+    fn snapshot_abort() {
+        flexi_logger::Logger::with_env().start();
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
+        raft.restore(&new_testing_snap());
+        raft.become_candidate();
+        raft.become_leader(); // new leader will append a noop log entry
+        raft.prs.progress.must_get_mut(&0x2).next = 1;
+        raft.prs.progress.must_get_mut(&0x2).become_snapshot(11);
+
+        // A successful MsgAppResp that has a higher/equal index than the
+        // pending snapshot should abort the pending snapshot.
+        info!("last index {}", raft.raft_log.last_index());
+        raft.step(Message{from: 0x2, to: 0x1, field_type: MsgAppResp, index: 11, ..Default::default()});
+        let pending_snapshot = raft.prs.progress.must_get(&0x2).pending_snapshot;
+        assert_eq!(pending_snapshot, 0, "pending_snapshot = {}, want 0", pending_snapshot);
+
+        // The follower entered StateReplicate and the leader send an append
+        // and optimistically updated the progress (so we see 13 instead of 12).
+        // There is something to append because the leader appended an empty entry
+        // to the log at index 12 when it assumed leadership.
+        let next = raft.prs.progress.must_get(&0x2).next;
+        assert_eq!(next, 13, "next = {}, want 13", next);
+        let count = raft.prs.progress.must_get(&0x2).inflights.count();
+        assert_eq!(count, 1, "expected an inflight message, got {}", count);
+    }
+
     fn new_testing_snap() -> Snapshot {
         let mut snap = Snapshot::new();
         let mut conf_state = ConfState::new();
