@@ -18,6 +18,7 @@ pub mod quorum;
 pub mod raft;
 mod raft_flow_control_test;
 mod raft_snap_test;
+mod paper_test;
 pub mod raft_log;
 pub mod raftpb;
 pub mod rawnode;
