@@ -384,7 +384,7 @@ impl From<u8> for ProgressType {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_log_with_storage, new_memory, new_test_conf, new_test_raw_node};
+    use crate::mock::{new_log_with_storage, new_memory, new_test_conf, new_test_raw_node, init_console_log};
     use crate::node::{Node, Ready, SafeResult, SnapshotStatus};
     use crate::raft::{RaftError, NO_LIMIT};
     use crate::raftpb::raft::ConfChangeTransition::{
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn t_raw_node_step() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let msg_type = (0..MessageType::MsgPreVoteResp.value())
             .map(|id| MessageType::from_i32(id).unwrap())
             .collect::<Vec<_>>();
@@ -536,7 +536,7 @@ mod tests {
     // joint configurations makes sure that they are exited successfully.
     #[test]
     fn t_raw_node_propose_and_conf_change() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
 
         // (cc, exp, exp2)
         let mut tests: Vec<(Box<dyn ConfChangeI>, ConfState, Option<ConfState>)> = vec![

@@ -688,9 +688,11 @@ impl<S: Storage> Raft<S> {
     // sends RPC, without entries to all the peers.
     fn bcast_heartbeat(&mut self) {
         let last_ctx = self.read_only.last_pending_request();
+        self.bcast_heartbeat_with_ctx(last_ctx);
     }
 
     fn bcast_heartbeat_with_ctx(&mut self, ctx: Option<Vec<u8>>) {
+        debug!("{:0x} bcast heartbeat with ctx", self.id);
         let nodes = self.prs.voter_nodes();
         for id in nodes
             .iter()
@@ -808,6 +810,7 @@ impl<S: Storage> Raft<S> {
         self.raft_log.maybe_commit(mci, self.term)
     }
 
+    /// Runs by followers and candidates after self.election_timeout
     pub fn tick_election(&mut self) {
         self.election_elapsed += 1;
         if self.promotable() && self.past_election_timeout() {
@@ -816,6 +819,33 @@ impl<S: Storage> Raft<S> {
             msg.set_from(self.id);
             msg.set_field_type(MsgHup);
             self.step(msg);
+            debug!("trigger tick election");
+        }
+    }
+
+    /// Runs by leaders to `send` a `MsgBeat` after self.heartbeat_timeout
+    pub fn tick_heartbeat(&mut self) {
+        self.heartbeat_elapsed += 1;
+        self.election_elapsed += 1;
+
+        if self.election_elapsed >= self.election_timeout {
+            self.election_elapsed = 0;
+            if self.check_quorum {
+                self.step(Message { from: self.id, field_type: MsgCheckQuorum, ..Default::default() });
+            }
+            // If current leader cannot transfer leadership in election_timeout, it becomes leader again.
+            if self.state == StateType::Leader && self.lead_transferee != NONE {
+                self.abort_leader_transferee();
+            }
+        }
+
+        if self.state != StateType::Leader {
+            return;
+        }
+
+        if self.heartbeat_elapsed >= self.heartbeat_timeout {
+            self.heartbeat_elapsed = 0;
+            self.step(Message{from: self.id, field_type: MsgBeat, ..Default::default()});
         }
     }
 
@@ -1071,7 +1101,7 @@ impl<S: Storage> Raft<S> {
                         if typ == MsgApp || typ == MsgHeartbeat || typ == MsgSnap {
                             self.become_follower(m.term, m.from);
                         } else {
-                            self.become_follower(m.get_term(), NONE);
+                            self.become_follower(m.from, NONE);
                         }
                     }
                 }
@@ -1115,10 +1145,10 @@ impl<S: Storage> Raft<S> {
                         self.raft_log.last_term(),
                         self.raft_log.last_index(),
                         self.vote,
-                        m.get_field_type(),
-                        m.get_from(),
-                        m.get_logTerm(),
-                        m.get_index(),
+                        m.field_type,
+                        m.from,
+                        m.logTerm,
+                        m.index,
                         self.term
                     );
 
@@ -1133,9 +1163,9 @@ impl<S: Storage> Raft<S> {
                         "{:#x} [term: {}] ignored a {:?} message with lower term from {:#x} [term: {}]",
                         self.id,
                         self.term,
-                        m.get_field_type(),
-                        m.get_from(),
-                        m.get_logTerm()
+                        m.field_type,
+                        m.from,
+                        m.logTerm,
                     );
                 }
                 return Ok(());

@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, MocksEnts, read_message, new_test_core_node, new_test_inner_node};
+    use crate::mock::{new_test_raw_node, MocksEnts, read_message, new_test_core_node, new_test_inner_node, init_console_log};
     use crate::storage::SafeMemStorage;
     use crate::raftpb::raft::{Snapshot, SnapshotMetadata, ConfState, Message};
     use protobuf::{SingularField, SingularPtrField};
@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn sending_snapshot_set_pending_snapshot() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![1], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn pending_snapshot_pause_replication() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn snapshot_failure() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn snapshot_succeed() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn snapshot_abort() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
         raft.become_candidate();

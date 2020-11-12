@@ -14,28 +14,28 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node};
+    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, init_console_log, read_message};
     use crate::raft::{Raft, StateType};
-    use crate::raftpb::raft::MessageType::MsgApp;
+    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgVote};
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use serde::de::Error;
 
     #[test]
     fn follower_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         test_update_term_from_message(StateType::Follower);
     }
 
     #[test]
     fn candidate_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         test_update_term_from_message(StateType::Candidate);
     }
 
     #[test]
     fn leader_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         test_update_term_from_message(StateType::Leader);
     }
 
@@ -79,7 +79,7 @@ mod tests {
     // Reference: section 5.1
     #[test]
     fn reject_stale_term_message() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut called = false;
         let mut fake_step = |raft: &Raft<SafeMemStorage>, m: Message| -> Result<(), String> {
             called = true;
@@ -104,7 +104,7 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn start_as_followers() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
         assert_eq!(
             raft.state,
@@ -121,9 +121,10 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn leader_bcast_beat() {
+        init_console_log();
         // heartbeat interval
         let hi = 1;
-        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, hi, SafeMemStorage::new());
         raft.become_candidate();
         raft.become_leader();
 
@@ -131,10 +132,60 @@ mod tests {
             let mut entry = new_entry_set(vec![(i + 1, 0)]);
             must_append_entry(&mut raft, entry);
         }
+
+        for i in 0..hi {
+            raft.tick_heartbeat();
+        }
+
+        let mut msgs = read_message(&mut raft);
+        msgs.sort_by(|m1, m2| format!("{:?}", m1).cmp(&format!("{:?}", m2)));
+
+        let w_msgs = vec![Message { from: 1, to: 2, term: 1, field_type: MsgHeartbeat, ..Default::default() }, Message { from: 1, to: 3, term: 1, field_type: MsgHeartbeat, ..Default::default() }];
+        assert_eq!(msgs, w_msgs, "msgs={:?}, want={:?}", msgs, w_msgs);
+    }
+
+    #[test]
+    fn follower_start_election() {
+        init_console_log();
+        test_non_leader_start_election(StateType::Follower);
     }
 
     fn must_append_entry<S: Storage>(raft: &mut Raft<S>, mut ents: Vec<Entry>) {
         let ok = raft.append_entry(&mut ents);
         assert!(ok, "entry unexpectedly dropped");
+    }
+
+    // if a follower receives no communication
+    // over election timeout, it begins an election to choose a new leader. It
+    // increments its current term and transitions to candidate state. It then
+    // votes for itself and issues RequestVote RPCs in parallel to each of the
+    // other servers in the cluster.
+    // Reference: section 5.2
+    // Also if a candidate fails to obtain a majority, it will time out and
+    // start a new election by incrementing its term and initiating another
+    // round of RequestVote RPCs.
+    // Reference: section 5.2
+    fn test_non_leader_start_election(state: StateType) {
+        // election timeout
+        let election_timeout = 10;
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], election_timeout, 1, SafeMemStorage::new());
+        match state {
+            StateType::Follower => { raft.become_follower(1, 2) }
+            StateType::Candidate => { raft.become_candidate() }
+            _ => {}
+        }
+        for i in 0..2 * election_timeout {
+            raft.tick_election();
+        }
+
+        assert_eq!(raft.term, 2, "term = {}, want = {}", raft.term, 2);
+        assert_eq!(raft.state, StateType::Candidate, "state = {}, want = {}", raft.state, StateType::Candidate);
+        let vote = raft.prs.votes.get(&raft.id);
+        assert!(vote.is_some() && *vote.unwrap(), "vote for self = false, want true");
+
+        let mut msgs = read_message(&mut raft);
+        msgs.sort_by(|m1, m2| format!("{:?}", m1).cmp(&format!("{:?}", m2)));
+        let w_msgs = vec![Message { from: 1, to: 2, term: 2, field_type: MsgVote, ..Default::default() }, Message { from: 1, to: 3, term: 2, field_type: MsgVote, ..Default::default() }];
+        assert_eq!(msgs, w_msgs, "msgs = {:?}, want = {:?}", msgs, w_msgs);
     }
 }

@@ -143,3 +143,11 @@ pub fn new_test_conf(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tic
         disable_proposal_forwarding: false,
     }
 }
+
+pub fn init_console_log() {
+    use std::env;
+    if !env::var("RUST_LOG").is_ok() {
+        env::set_var("RUST_LOG", "debug");
+    }
+    flexi_logger::Logger::with_env().start();
+}

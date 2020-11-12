@@ -14,7 +14,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, read_message, MockEntry, MocksEnts};
+    use crate::mock::{new_test_raw_node, read_message, MockEntry, MocksEnts, init_console_log};
     use crate::raft::Raft;
     use crate::raftpb::raft::MessageType::{MsgAppResp, MsgHeartbeatResp, MsgProp};
     use crate::raftpb::raft::{Entry, Message};
@@ -27,7 +27,7 @@ mod tests {
     // 2. when the windows is full, no more `MsgApp` can be sent.
     #[test]
     fn msg_app_flow_control_full() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
@@ -84,7 +84,7 @@ mod tests {
     // 2. out-of-dated `MsgAppResp` has no effect on the sliding windows.
     #[test]
     fn msg_app_flow_control_move_forward() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let raft = new_test_raw_node(1, vec![1, 2], 5, 1, SafeMemStorage::new());
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
@@ -129,7 +129,7 @@ mod tests {
     // Ensure a heartbeat response frees one slot if the window is full
     #[test]
     fn msg_app_flow_control_recv_heartbeat() {
-        flexi_logger::Logger::with_env().start();
+        init_console_log();
         let raft = new_test_raw_node(0x1, vec![0x1, 0x2], 5, 1, SafeMemStorage::new());
         let mut wl_raft = raft.wl();
         wl_raft.raft.become_candidate();
