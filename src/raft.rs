@@ -433,7 +433,7 @@ impl<S: Storage> Raft<S> {
             },
             &cs,
         )
-            .unwrap();
+        .unwrap();
         let s_tc = raft.switch_to_config(cfg, prs);
         assert!(equivalent(&cs, &s_tc).is_ok());
 
@@ -544,7 +544,10 @@ impl<S: Storage> Raft<S> {
     // ("empty" messages are useful to convey updated Commit indexes, but
     // are undesirable when we're sending multiple messages in a batch).
     fn maybe_send_append(&mut self, to: u64, send_if_empty: bool) -> bool {
-        debug!("execute maybe_send_append, to: {}, send_if_empty: {}", to, send_if_empty);
+        debug!(
+            "execute maybe_send_append, to: {}, send_if_empty: {}",
+            to, send_if_empty
+        );
         let pr = self.prs.progress.must_get_mut(&to);
         if pr.is_paused() {
             return false;
@@ -558,7 +561,10 @@ impl<S: Storage> Raft<S> {
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
         if ents.as_ref().map_or_else(|_| true, |ents| ents.is_empty()) && !send_if_empty {
-            debug!("ignore send append from, send_if_empty={}, to={:0x}", send_if_empty, m.to);
+            debug!(
+                "ignore send append from, send_if_empty={}, to={:0x}",
+                send_if_empty, m.to
+            );
             return false;
         }
         if term.is_err() || ents.is_err() {
@@ -595,16 +601,16 @@ impl<S: Storage> Raft<S> {
                     );
                 }
                 Err(e)
-                if e == RaftLogError::FromStorage(
-                    StorageError::SnapshotTemporarilyUnavailable,
-                ) =>
-                    {
-                        debug!(
+                    if e == RaftLogError::FromStorage(
+                        StorageError::SnapshotTemporarilyUnavailable,
+                    ) =>
+                {
+                    debug!(
                             "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
                             self.id, to
                         );
-                        return false;
-                    }
+                    return false;
+                }
                 Err(e) => panic!("{:?}", e), // TODO(bdarnell)
             }
         } else {
@@ -831,7 +837,11 @@ impl<S: Storage> Raft<S> {
         if self.election_elapsed >= self.election_timeout {
             self.election_elapsed = 0;
             if self.check_quorum {
-                self.step(Message { from: self.id, field_type: MsgCheckQuorum, ..Default::default() });
+                self.step(Message {
+                    from: self.id,
+                    field_type: MsgCheckQuorum,
+                    ..Default::default()
+                });
             }
             // If current leader cannot transfer leadership in election_timeout, it becomes leader again.
             if self.state == StateType::Leader && self.lead_transferee != NONE {
@@ -845,7 +855,11 @@ impl<S: Storage> Raft<S> {
 
         if self.heartbeat_elapsed >= self.heartbeat_timeout {
             self.heartbeat_elapsed = 0;
-            self.step(Message{from: self.id, field_type: MsgBeat, ..Default::default()});
+            self.step(Message {
+                from: self.id,
+                field_type: MsgBeat,
+                ..Default::default()
+            });
         }
     }
 
@@ -909,10 +923,7 @@ impl<S: Storage> Raft<S> {
         // (perhaps after having received a snapshot as a result). The leader is
         // trivially in this state. Note that r.reset() has initialized this
         // progress with the last index already.
-        self.prs
-            .progress
-            .must_get_mut(&self.id)
-            .become_replicate();
+        self.prs.progress.must_get_mut(&self.id).become_replicate();
 
         // conservatively set the pending_config_index to the last index in the
         // log. There may or may not be a pending config change. but it's
@@ -1406,10 +1417,10 @@ impl<S: Storage> Raft<S> {
             },
             cs,
         )
-            // This should never happen. Either there's a bug in our config change
-            // handling or the client corrupted the conf change.
-            .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
-            .unwrap();
+        // This should never happen. Either there's a bug in our config change
+        // handling or the client corrupted the conf change.
+        .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
+        .unwrap();
         equivalent(cs, &self.switch_to_config(cfg, prs)).unwrap();
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded
@@ -1617,7 +1628,7 @@ impl<S: Storage> Raft<S> {
     // than or equal to the randomized election timeout in
     // [election_timeout, 2*election_timeout-1].
     fn past_election_timeout(&self) -> bool {
-        self.election_timeout >= self.randomized_election_timeout
+        self.election_elapsed >= self.randomized_election_timeout
     }
 
     fn reset_randomized_election_timeout(&mut self) {
@@ -1778,11 +1789,7 @@ impl<S: Storage> Raft<S> {
 
         // All other message types require a progress for m.From (pr).
         if !self.prs.progress.contains_key(&m.from) {
-            info!(
-                "{:#x} no progress available for {:#x}",
-                self.id,
-                m.from
-            );
+            info!("{:#x} no progress available for {:#x}", self.id, m.from);
             return Ok(());
         }
         match m.field_type {
@@ -2038,11 +2045,7 @@ impl<S: Storage> Raft<S> {
     }
 
     fn callback_heartbeat_resp(&mut self, m: Message) -> Result<(), RaftError> {
-        info!(
-            "heartbeat call back, from:{:0x}, to: {:0x}",
-            m.from,
-            m.to
-        );
+        info!("heartbeat call back, from:{:0x}, to: {:0x}", m.from, m.to);
         let pr = self.prs.progress.must_get_mut(&m.from);
         pr.recent_active = true;
         pr.probe_sent = false;
@@ -2113,7 +2116,10 @@ impl<S: Storage> Raft<S> {
             // the snapshot index, but the snapshot never applied.
             pr.pending_snapshot = 0;
             pr.become_probe();
-            debug!("{:0x} snapshot failed, resumed sending replication message to {:0x} [{:?}]", self.id, m.from, pr);
+            debug!(
+                "{:0x} snapshot failed, resumed sending replication message to {:0x} [{:?}]",
+                self.id, m.from, pr
+            );
         }
 
         // If snapshot finished, wait for the MsgAppResp from the remote node before sending

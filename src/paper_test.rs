@@ -14,7 +14,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, init_console_log, read_message};
+    use crate::mock::{
+        init_console_log, new_empty_entry_set, new_entry_set, new_test_inner_node, read_message,
+    };
     use crate::raft::{Raft, StateType};
     use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgVote};
     use crate::raftpb::raft::{Entry, HardState, Message};
@@ -140,7 +142,22 @@ mod tests {
         let mut msgs = read_message(&mut raft);
         msgs.sort_by(|m1, m2| format!("{:?}", m1).cmp(&format!("{:?}", m2)));
 
-        let w_msgs = vec![Message { from: 1, to: 2, term: 1, field_type: MsgHeartbeat, ..Default::default() }, Message { from: 1, to: 3, term: 1, field_type: MsgHeartbeat, ..Default::default() }];
+        let w_msgs = vec![
+            Message {
+                from: 1,
+                to: 2,
+                term: 1,
+                field_type: MsgHeartbeat,
+                ..Default::default()
+            },
+            Message {
+                from: 1,
+                to: 3,
+                term: 1,
+                field_type: MsgHeartbeat,
+                ..Default::default()
+            },
+        ];
         assert_eq!(msgs, w_msgs, "msgs={:?}, want={:?}", msgs, w_msgs);
     }
 
@@ -148,6 +165,12 @@ mod tests {
     fn follower_start_election() {
         init_console_log();
         test_non_leader_start_election(StateType::Follower);
+    }
+
+    #[test]
+    fn candidate_start_new_election() {
+        init_console_log();
+        test_non_leader_start_election(StateType::Candidate);
     }
 
     fn must_append_entry<S: Storage>(raft: &mut Raft<S>, mut ents: Vec<Entry>) {
@@ -168,10 +191,16 @@ mod tests {
     fn test_non_leader_start_election(state: StateType) {
         // election timeout
         let election_timeout = 10;
-        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], election_timeout, 1, SafeMemStorage::new());
+        let mut raft = new_test_inner_node(
+            0x1,
+            vec![0x1, 0x2, 0x3],
+            election_timeout,
+            1,
+            SafeMemStorage::new(),
+        );
         match state {
-            StateType::Follower => { raft.become_follower(1, 2) }
-            StateType::Candidate => { raft.become_candidate() }
+            StateType::Follower => raft.become_follower(1, 0x2),
+            StateType::Candidate => raft.become_candidate(),
             _ => {}
         }
         for i in 0..2 * election_timeout {
@@ -179,13 +208,34 @@ mod tests {
         }
 
         assert_eq!(raft.term, 2, "term = {}, want = {}", raft.term, 2);
-        assert_eq!(raft.state, StateType::Candidate, "state = {}, want = {}", raft.state, StateType::Candidate);
-        let vote = raft.prs.votes.get(&raft.id);
-        assert!(vote.is_some() && *vote.unwrap(), "vote for self = false, want true");
+        assert_eq!(
+            raft.state,
+            StateType::Candidate,
+            "state = {}, want = {}",
+            raft.state,
+            StateType::Candidate
+        );
+        let vote = raft.prs.votes.get(&raft.id).unwrap();
+        assert!(*vote, "vote for self = false, want true");
 
         let mut msgs = read_message(&mut raft);
         msgs.sort_by(|m1, m2| format!("{:?}", m1).cmp(&format!("{:?}", m2)));
-        let w_msgs = vec![Message { from: 1, to: 2, term: 2, field_type: MsgVote, ..Default::default() }, Message { from: 1, to: 3, term: 2, field_type: MsgVote, ..Default::default() }];
+        let w_msgs = vec![
+            Message {
+                from: 1,
+                to: 2,
+                term: 2,
+                field_type: MsgVote,
+                ..Default::default()
+            },
+            Message {
+                from: 1,
+                to: 3,
+                term: 2,
+                field_type: MsgVote,
+                ..Default::default()
+            },
+        ];
         assert_eq!(msgs, w_msgs, "msgs = {:?}, want = {:?}", msgs, w_msgs);
     }
 }

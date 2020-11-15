@@ -1,9 +1,10 @@
-use crate::raft::{Config, ReadOnlyOption, NO_LIMIT, Raft};
+use crate::raft::{Config, Raft, ReadOnlyOption, NO_LIMIT};
 use crate::raft_log::RaftLog;
-use crate::raftpb::raft::{Entry, Snapshot, Message};
-use crate::rawnode::{SafeRawNode, RawCoreNode};
+use crate::raftpb::raft::{Entry, Message, Snapshot};
+use crate::rawnode::{RawCoreNode, SafeRawNode};
 use crate::storage::{MemoryStorage, SafeMemStorage, Storage};
 use bytes::Bytes;
+use env_logger::Logger;
 use protobuf::RepeatedField;
 
 pub fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
@@ -117,11 +118,23 @@ pub fn new_test_raw_node(
     SafeRawNode::new2(new_test_conf(id, peers, election_tick, heartbeat_tick), s)
 }
 
-pub fn new_test_core_node(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tick: u64, s: SafeMemStorage) -> RawCoreNode<SafeMemStorage> {
+pub fn new_test_core_node(
+    id: u64,
+    peers: Vec<u64>,
+    election_tick: u64,
+    heartbeat_tick: u64,
+    s: SafeMemStorage,
+) -> RawCoreNode<SafeMemStorage> {
     RawCoreNode::new(new_test_conf(id, peers, election_tick, heartbeat_tick), s)
 }
 
-pub fn new_test_inner_node(id: u64, peers: Vec<u64>, election_tick: u64, heartbeat_tick: u64, s: SafeMemStorage) -> Raft<SafeMemStorage> {
+pub fn new_test_inner_node(
+    id: u64,
+    peers: Vec<u64>,
+    election_tick: u64,
+    heartbeat_tick: u64,
+    s: SafeMemStorage,
+) -> Raft<SafeMemStorage> {
     Raft::new(new_test_conf(id, peers, election_tick, heartbeat_tick), s)
 }
 
