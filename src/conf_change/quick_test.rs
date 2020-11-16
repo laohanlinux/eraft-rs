@@ -21,13 +21,12 @@ mod tests {
     use rand::Rng;
     use protobuf::ProtobufEnum;
     use crate::tracker::ProgressTracker;
-    use crate::mock::init_console_log;
 
     // uses quick_check to verify that simple and joint config
     // changes arrive at the same result.
     #[test]
     fn t_conf_change_quick() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         let count = 1000;
         // log the first couple of runs of give some indication of things working
         // as intended.

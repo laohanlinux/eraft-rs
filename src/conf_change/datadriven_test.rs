@@ -8,11 +8,10 @@ mod test {
     use crate::tracker::progress::ProgressMap;
     use std::convert::AsMut;
     use env_logger::init;
-    use crate::mock::init_console_log;
 
     #[test]
     fn t_conf_data_driven() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         walk("src/conf_change/testdata", |p| {
             let mut tr = ProgressTracker::new(10);
             let mut c = Changer {

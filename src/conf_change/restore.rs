@@ -137,11 +137,10 @@ mod tests {
     use crate::tracker::ProgressTracker;
     use crate::conf_change::restore::restore;
     use protobuf::reflect::ProtobufValue;
-    use crate::mock::init_console_log;
 
     #[test]
     fn t_restore() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         let count = 1000;
         let f = |cs: &mut ConfState| -> bool {
             let mut chg = Changer { tracker: ProgressTracker::new(10), last_index: 0 };

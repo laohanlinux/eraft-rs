@@ -780,7 +780,7 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::{new_test_raw_node, init_console_log};
+    use crate::mock::{new_test_raw_node};
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::MsgProp;
@@ -814,7 +814,7 @@ mod tests {
     // and other kinds of messages to recvc chan.
     #[test]
     fn t_node_step() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         smol::block_on(async {
             for msgn in 0..MessageType::MsgPreVoteResp.value() {
                 let mut node: InnerNode<SafeMemStorage> =
@@ -869,7 +869,7 @@ mod tests {
     // ensure that node.Propose sends the given proposal to the underlying raft.
     #[test]
     fn t_node_process() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         smol::run(async {
             {
                 msgs.lock().unwrap().clear();
@@ -903,7 +903,7 @@ mod tests {
 
     #[test]
     fn t_node_read_index() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         smol::run(async {
             let s = SafeMemStorage::new();
             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());

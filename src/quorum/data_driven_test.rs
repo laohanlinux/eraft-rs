@@ -22,7 +22,6 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fmt::Write;
     use std::iter::FromIterator;
-    use crate::mock::init_console_log;
 
     // parses and executes and the test cases in ./testdata/*. An entry
     // in such a file specifies the command, which is either of "committed" to check
@@ -37,7 +36,7 @@ mod tests {
     // influence the result; if it does, this is noted in the test's output.
     #[test]
     fn t_data_driven() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         walk("src/quorum/testdata", |p| {
             execute_test(p, "--------------------------------", |data| -> String {
                 // Two majority configs. The first one is always used (though it may

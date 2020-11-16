@@ -14,30 +14,29 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{
-        init_console_log, new_empty_entry_set, new_entry_set, new_test_inner_node, read_message,
-    };
+    use crate::mock::{ new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
     use crate::raft::{Raft, StateType};
     use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgVote};
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
+    use nom::lib::std::collections::HashMap;
     use serde::de::Error;
 
     #[test]
     fn follower_update_term_from_message() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Follower);
     }
 
     #[test]
     fn candidate_update_term_from_message() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Candidate);
     }
 
     #[test]
     fn leader_update_term_from_message() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Leader);
     }
 
@@ -81,7 +80,7 @@ mod tests {
     // Reference: section 5.1
     #[test]
     fn reject_stale_term_message() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         let mut called = false;
         let mut fake_step = |raft: &Raft<SafeMemStorage>, m: Message| -> Result<(), String> {
             called = true;
@@ -106,7 +105,7 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn start_as_followers() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
         assert_eq!(
             raft.state,
@@ -123,7 +122,7 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn leader_bcast_beat() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         // heartbeat interval
         let hi = 1;
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, hi, SafeMemStorage::new());
@@ -163,13 +162,13 @@ mod tests {
 
     #[test]
     fn follower_start_election() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         test_non_leader_start_election(StateType::Follower);
     }
 
     #[test]
     fn candidate_start_new_election() {
-        init_console_log();
+        flexi_logger::Logger::with_env().start();
         test_non_leader_start_election(StateType::Candidate);
     }
 
@@ -237,5 +236,15 @@ mod tests {
             },
         ];
         assert_eq!(msgs, w_msgs, "msgs = {:?}, want = {:?}", msgs, w_msgs);
+    }
+
+    // leader election during one round of `RequestVote` RPC:
+    // a) it wins the election
+    // b) it loses the election
+    // c) it is unclear about the result
+    // Reference: section 5.2
+    #[test]
+    fn leader_election_in_one_round_rpc() {
+        // let tests = vec![(1, HashMap::new(), StateType::Leader), vec![]]
     }
 }
