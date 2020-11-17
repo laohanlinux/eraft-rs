@@ -247,9 +247,6 @@ mod tests {
     #[test]
     fn leader_election_in_one_round_rpc() {
         flexi_logger::Logger::with_env().start();
-        let map = hashmap! {
-            "a" =>1,
-        };
         let tests = vec![
             (1, hashmap! {}, StateType::Leader),
             (3, hashmap! {2 => true, 3 => true}, StateType::Leader),
