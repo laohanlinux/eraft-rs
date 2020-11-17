@@ -14,11 +14,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{ new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
+    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
     use crate::raft::{Raft, StateType};
-    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgVote};
+    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp};
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
+    use maplit::hashmap;
     use nom::lib::std::collections::HashMap;
     use serde::de::Error;
 
@@ -245,6 +246,73 @@ mod tests {
     // Reference: section 5.2
     #[test]
     fn leader_election_in_one_round_rpc() {
-        // let tests = vec![(1, HashMap::new(), StateType::Leader), vec![]]
+        flexi_logger::Logger::with_env().start();
+        let map = hashmap! {
+            "a" =>1,
+        };
+        let tests = vec![
+            (1, hashmap! {}, StateType::Leader),
+            (3, hashmap! {2 => true, 3 => true}, StateType::Leader),
+            (3, hashmap! {2 => true}, StateType::Leader),
+            (
+                5,
+                hashmap! {2 => true, 3 => true, 4 => true, 5 => true},
+                StateType::Leader,
+            ),
+            (
+                5,
+                hashmap! {2 => true, 3 => true, 4 => true},
+                StateType::Leader,
+            ),
+            (5, hashmap! {2 => true, 3 => true}, StateType::Leader),
+            // return to follower state if it receives vote denial from a majority
+            (3, hashmap! {2 => false, 3 => false}, StateType::Follower),
+            (
+                5,
+                hashmap! {2 => false, 3 => false, 4 => false, 5 => false},
+                StateType::Follower,
+            ),
+            (
+                5,
+                hashmap! {2 => true, 3 => false, 4 => false, 5 => false},
+                StateType::Follower,
+            ),
+            // stay in candidate if it does not obtain the majority
+            (3, hashmap! {}, StateType::Candidate),
+            (5, hashmap! {2 => true}, StateType::Candidate),
+            (5, hashmap! {2 => false, 3 => false}, StateType::Candidate),
+            (5, hashmap! {}, StateType::Candidate),
+        ];
+
+        for (i, (size, votes, state)) in tests.iter().enumerate() {
+            let mut raft =
+                new_test_inner_node(0x1, ids_by_size(*size), 10, 1, SafeMemStorage::new());
+            raft.step(Message {
+                from: 0x1,
+                to: 0x1,
+                field_type: MsgHup,
+                ..Default::default()
+            });
+
+            for (id, vote) in votes {
+                raft.step(Message {
+                    from: *id,
+                    to: 0x1,
+                    field_type: MsgVoteResp,
+                    reject: !*vote,
+                    ..Default::default()
+                });
+            }
+            assert_eq!(
+                raft.state, *state,
+                "#{}, state = {}, want {:?}",
+                i, raft.state, *state
+            );
+            assert_eq!(raft.term, 1, "#{}, term = {}, want {}", i, raft.term, 1);
+        }
+    }
+
+    fn ids_by_size(size: u64) -> Vec<u64> {
+        (1..=size).collect::<Vec<_>>()
     }
 }
