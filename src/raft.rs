@@ -1230,10 +1230,20 @@ impl<S: Storage> Raft<S> {
                         m.get_index(),
                         self.term
                     );
+                    // When responding to Msg{Pre,}Vote messages we include the term
+                    // from the message, not the local term. To see why, consider the
+                    // case where a single node was previously partitioned away and
+                    // it's local term is now out of date. If we include the local term
+                    // (recall that for pre-votes we don't update the local term), the
+                    // (pre-)campaigning node on the other end will proceed to ignore
+                    // the message (it ignores all out of date messages).
+                    // The term in the original message and current local term are the
+                    // same in the case of regular votes, but different for pre-votes.
                     let mut msg = Message::new();
                     msg.set_to(m.get_from());
                     msg.set_term(m.get_term());
                     msg.set_field_type(vote_resp_msg_type(m.get_field_type()));
+                    self.send(msg);
                     if m.get_field_type() == MsgVote {
                         // only record real votes.
                         self.election_elapsed = 0;
@@ -1257,6 +1267,7 @@ impl<S: Storage> Raft<S> {
                     msg.set_term(self.term);
                     msg.set_field_type(vote_resp_msg_type(m.get_field_type()));
                     msg.set_reject(true);
+                    self.send(msg);
                 }
             }
 
