@@ -1198,7 +1198,7 @@ impl<S: Storage> Raft<S> {
                     || (m.get_field_type() == MsgPreVote && m.get_term() > self.term);
                 // ...or this is a PreVote for a further ter
 
-                // ... and we belive the candidate is up to date.
+                // ... and we believe the candidate is up to date.
                 if can_vote && self.raft_log.is_up_to_date(m.get_index(), m.get_logTerm()) {
                     // Note: it turns out that that learners must be allowed to cast votes.
                     // This seems counter- intuitive but is necessary in the situation in which
@@ -1219,7 +1219,7 @@ impl<S: Storage> Raft<S> {
                     // in:
                     // https://github.com/etcd-io/etcd/issues/7625#issuecomment-488798263.
                     info!(
-                        "{:#x} [logterm: {}, index: {}, vote: {:#x}] cast {:?} fro {:#x} [logterm: {}, index: {}]  at term {}",
+                        "{:#x} [logterm: {}, index: {}, vote: {:#x}] cast {:?} for {:#x} [logterm: {}, index: {}]  at term {}",
                         self.id,
                         self.raft_log.last_term(),
                         self.raft_log.last_index(),

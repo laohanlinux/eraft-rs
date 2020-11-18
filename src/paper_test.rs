@@ -14,14 +14,15 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
-    use crate::raft::{Raft, StateType};
-    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp};
-    use crate::raftpb::raft::{Entry, HardState, Message};
-    use crate::storage::{SafeMemStorage, Storage};
     use maplit::hashmap;
     use nom::lib::std::collections::HashMap;
     use serde::de::Error;
+
+    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
+    use crate::raft::{NONE, Raft, StateType};
+    use crate::raftpb::raft::{Entry, HardState, Message};
+    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp};
+    use crate::storage::{SafeMemStorage, Storage};
 
     #[test]
     fn follower_update_term_from_message() {
@@ -306,6 +307,31 @@ mod tests {
                 i, raft.state, *state
             );
             assert_eq!(raft.term, 1, "#{}, term = {}, want {}", i, raft.term, 1);
+        }
+    }
+
+    // each follower will vote for at most one
+    // candidate in a given term, on a first-come-first-served basis.
+    // Reference: section 5.2
+    #[test]
+    fn follower_vote() {
+        flexi_logger::Logger::with_env().start();
+        let tests = vec![
+            (NONE, 1, false),
+            (NONE, 1, false),
+            (1, 1, false),
+            (2, 2, false),
+            (1, 2, true),
+            (2, 1, true),
+        ];
+        for (i, (vote, n_vote, w_reject)) in tests.iter().enumerate() {
+            let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+            raft.load_state(&HardState { term: 1, vote: *vote, ..Default::default() });
+            raft.step(Message { from: *n_vote, to: 0x1, term: 1, field_type: MsgVote, ..Default::default() });
+
+            let msgs = read_message(&mut raft);
+            let w_msgs = vec![Message { from: 0x1, to: *n_vote, term: 1, field_type: MsgVoteResp, reject: *w_reject, ..Default::default() }];
+            assert_eq!(msgs, w_msgs, "#{}: msgs = {:?}, want {:?}", i, msgs, w_msgs);
         }
     }
 
