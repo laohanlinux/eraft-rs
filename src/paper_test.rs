@@ -19,9 +19,9 @@ mod tests {
     use serde::de::Error;
 
     use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
-    use crate::raft::{NONE, Raft, StateType};
-    use crate::raftpb::raft::{Entry, HardState, Message};
+    use crate::raft::{Raft, StateType, NONE};
     use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp};
+    use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
 
     #[test]
@@ -325,13 +325,88 @@ mod tests {
             (2, 1, true),
         ];
         for (i, (vote, n_vote, w_reject)) in tests.iter().enumerate() {
-            let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
-            raft.load_state(&HardState { term: 1, vote: *vote, ..Default::default() });
-            raft.step(Message { from: *n_vote, to: 0x1, term: 1, field_type: MsgVote, ..Default::default() });
+            let mut raft =
+                new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+            raft.load_state(&HardState {
+                term: 1,
+                vote: *vote,
+                ..Default::default()
+            });
+            raft.step(Message {
+                from: *n_vote,
+                to: 0x1,
+                term: 1,
+                field_type: MsgVote,
+                ..Default::default()
+            });
 
             let msgs = read_message(&mut raft);
-            let w_msgs = vec![Message { from: 0x1, to: *n_vote, term: 1, field_type: MsgVoteResp, reject: *w_reject, ..Default::default() }];
+            let w_msgs = vec![Message {
+                from: 0x1,
+                to: *n_vote,
+                term: 1,
+                field_type: MsgVoteResp,
+                reject: *w_reject,
+                ..Default::default()
+            }];
             assert_eq!(msgs, w_msgs, "#{}: msgs = {:?}, want {:?}", i, msgs, w_msgs);
+        }
+    }
+
+    // tests that while waiting for votes,
+    // if a candidate receives an AppendEntries RPC from another server claiming
+    // to be leader whose term is at least as large as the candidate's current term,
+    // it recognizes the leader as legitimate and returns to follower state.
+    // Reference: section 5.2
+    #[test]
+    fn candidate_fallback() {
+        let tests = vec![
+            Message {
+                from: 0x2,
+                to: 0x1,
+                term: 1,
+                field_type: MsgApp,
+                ..Default::default()
+            },
+            Message {
+                from: 0x2,
+                to: 0x1,
+                term: 2,
+                field_type: MsgApp,
+                ..Default::default()
+            },
+        ];
+
+        for (i, msg) in tests.iter().enumerate() {
+            let mut raft =
+                new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+            raft.step(Message {
+                from: 0x1,
+                to: 0x1,
+                field_type: MsgHup,
+                ..Default::default()
+            });
+            assert_eq!(
+                raft.state,
+                StateType::Candidate,
+                "unexpected state = {}, want {}",
+                raft.state,
+                StateType::Candidate
+            );
+            raft.step(msg.clone());
+            assert_eq!(
+                raft.state,
+                StateType::Follower,
+                "#{}: state = {}, want {}",
+                i,
+                raft.state,
+                StateType::Follower
+            );
+            assert_eq!(
+                raft.term, msg.term,
+                "#{}: term = {}, want {}",
+                i, raft.term, msg.term
+            );
         }
     }
 

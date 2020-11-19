@@ -1112,7 +1112,7 @@ impl<S: Storage> Raft<S> {
                         if typ == MsgApp || typ == MsgHeartbeat || typ == MsgSnap {
                             self.become_follower(m.term, m.from);
                         } else {
-                            self.become_follower(m.from, NONE);
+                            self.become_follower(m.term, NONE);
                         }
                     }
                 }
