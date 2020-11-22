@@ -410,6 +410,71 @@ mod tests {
         }
     }
 
+    #[test]
+    fn follower_election_timeout_randomized() {
+        flexi_logger::Logger::with_env().start();
+        test_non_leader_election_timeout_randomized(StateType::Follower);
+    }
+
+    #[test]
+    fn candidate_election_timeout_randomized() {
+        flexi_logger::Logger::with_env().start();
+        test_non_leader_election_timeout_randomized(StateType::Candidate);
+    }
+
+    // test that election timeout for follower or candidate is randomized.
+    // Reference: section 5.2
+    fn test_non_leader_election_timeout_randomized(state: StateType) {
+        let et = 10;
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+        let mut timeouts: HashMap<i32, bool> = hashmap! {};
+
+        for round in 0..50 * et {
+            match state {
+                StateType::Follower => raft.become_follower(raft.term + 1, 0x2),
+                StateType::Candidate => raft.become_candidate(),
+                _ => {}
+            }
+
+            let mut time = 0;
+            while read_message(&mut raft).is_empty() {
+                raft.tick_election();
+                time += 1;
+            }
+            timeouts.insert(time, true);
+        }
+
+        // Note: election time range
+        for d in et + 1..2 * et {
+            assert!(
+                timeouts.contains_key(&d),
+                "timeout in {} ticks should happen"
+            );
+        }
+    }
+
+    // tests that in most cases only a
+    // single server(follower or candidate) will time out, which reduces the
+    // likelihood of split vote in the new election.
+    // Reference: section 5.2
+    fn test_non_leader_election_timeout_non_conflict(state: StateType) {
+        let et = 10;
+        let size = 5;
+        let ids = ids_by_size(size as u64);
+        let mut rafts: Vec<Raft<SafeMemStorage>> = Vec::with_capacity(size);
+        for idx in ids {
+            rafts.push(new_test_inner_node(
+                idx,
+                vec![0x1, 0x2, 0x3],
+                10,
+                1,
+                SafeMemStorage::new(),
+            ));
+        }
+
+        let mut conflicts = 0;
+    }
+
     fn ids_by_size(size: u64) -> Vec<u64> {
         (1..=size).collect::<Vec<_>>()
     }
