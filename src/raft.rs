@@ -677,7 +677,7 @@ impl<S: Storage> Raft<S> {
 
     // sends RPC, with entries to all peers that are not up-to-date
     // according to the progress recorded in self.prs.
-    fn bcast_append(&mut self) {
+    pub (crate) fn bcast_append(&mut self) {
         let ids = self.prs.visit_nodes();
         let cur_id = self.id;
         for id in ids.iter().filter(|id| **id != cur_id) {

@@ -16,7 +16,6 @@
 mod tests {
     use maplit::hashmap;
     use nom::lib::std::collections::HashMap;
-    use serde::de::Error;
 
     use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
     use crate::raft::{Raft, StateType, NONE};
@@ -132,7 +131,7 @@ mod tests {
         raft.become_leader();
 
         for i in 0..10 {
-            let mut entry = new_entry_set(vec![(i + 1, 0)]);
+            let entry = new_entry_set(vec![(i + 1, 0)]);
             must_append_entry(&mut raft, entry);
         }
 
@@ -204,7 +203,7 @@ mod tests {
             StateType::Candidate => raft.become_candidate(),
             _ => {}
         }
-        for i in 0..2 * election_timeout {
+        for _ in 0..2 * election_timeout {
             raft.tick_election();
         }
 
@@ -453,6 +452,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn follower_election_timeout_non_conflict() {
+        flexi_logger::Logger::with_env().start();
+        test_non_leader_election_timeout_non_conflict(StateType::Follower);
+    }
+
+    #[test]
+    fn candidate_election_timeout_non_conflict() {
+        flexi_logger::Logger::with_env().start();
+        test_non_leader_election_timeout_non_conflict(StateType::Candidate);
+    }
+
     // tests that in most cases only a
     // single server(follower or candidate) will time out, which reduces the
     // likelihood of split vote in the new election.
@@ -466,16 +477,89 @@ mod tests {
             rafts.push(new_test_inner_node(
                 idx,
                 vec![0x1, 0x2, 0x3],
-                10,
+                et,
                 1,
                 SafeMemStorage::new(),
             ));
         }
 
-        let mut conflicts = 0;
+        let mut conflicts = 0.0;
+
+        for _ in 0..1000 {
+            for raft in &mut rafts {
+                match state {
+                    StateType::Follower => raft.become_follower(raft.term + 1, NONE),
+                    StateType::Candidate => raft.become_candidate(),
+                    _ => {}
+                }
+            }
+
+            let mut timeout_num = 0;
+            while timeout_num == 0 {
+                for mut raft in &mut rafts {
+                    raft.tick_election();
+                    if !read_message(&mut raft).is_empty() {
+                        timeout_num += 1;
+                    }
+                }
+            }
+            // several rafts time out at the same tick
+            if timeout_num > 1 {
+                conflicts += 1.0;
+            }
+        }
+        let g = conflicts / 1000.0;
+        assert!(g <= 0.3, "probability of conflicts = {}, want <= 0.3", g);
+    }
+
+    // tests that when receiving client proposals,
+    // the leader appends the proposal to its log as a new entry, then issues
+    // AppendEntries RPCs in parallel to each of the other servers to replicate
+    // the entry. Also, when sending an AppendEntries RPC, the leader includes
+    // the index and term of the entry in its log that immediately precedes
+    // the new entries.
+    // Also, it writes the new entry into stable storage.
+    // Reference: section 5.3
+    #[test]
+    fn leader_start_replication() {
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+        raft.become_candidate();
+        raft.become_leader();
+        commit_noop_entry(&mut raft); 
+        
     }
 
     fn ids_by_size(size: u64) -> Vec<u64> {
         (1..=size).collect::<Vec<_>>()
+    }
+
+    fn commit_noop_entry(raft: &mut Raft<SafeMemStorage>) {
+        assert_eq!(raft.state, StateType::Leader, "it should only be used when it is the leader");
+        raft.bcast_append();
+    
+        // simulate the response of msgApp
+        let msgs = read_message(raft);
+        for m in msgs {
+            assert!(m.field_type == MsgApp && m.entries.len() == 1 && !m.entries.first().unwrap().Data.is_empty(), "not a message to append noop empty");
+            raft.step(accept_and_reply(m));
+        }
+    
+        // ignore future messages to refresh followers' commit index
+        read_message(raft);
+        let unstable_entries = raft.raft_log.unstable_entries().iter().map(|entry| entry.clone()).collect::<Vec<_>>();
+        raft.raft_log.storage.wl().append(unstable_entries);
+        raft.raft_log.applied_to(raft.raft_log.committed);
+        raft.raft_log.stable_to(raft.raft_log.last_index(), raft.raft_log.last_term());
+    }
+
+    fn accept_and_reply(m: Message) -> Message {
+        assert_eq!(m.field_type, MsgApp, "type should be MsgApp");
+        Message {
+            from: m.to,
+            to: m.from,
+            term: m.term,
+            field_type: MsgApp,
+            ..Default::default()
+        }
     }
 }
