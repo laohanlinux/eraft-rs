@@ -1,5 +1,3 @@
-// Copyright 2015 The etcd Authors
-//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,7 +17,9 @@ mod tests {
 
     use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
     use crate::raft::{Raft, StateType, NONE};
-    use crate::raftpb::raft::MessageType::{MsgApp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp};
+    use crate::raftpb::raft::MessageType::{
+        MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp,
+    };
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
 
@@ -522,11 +522,11 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn leader_start_replication() {
+        flexi_logger::Logger::with_env().start();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
         raft.become_candidate();
         raft.become_leader();
-        commit_noop_entry(&mut raft); 
-        
+        commit_noop_entry(&mut raft);
     }
 
     fn ids_by_size(size: u64) -> Vec<u64> {
@@ -534,22 +534,39 @@ mod tests {
     }
 
     fn commit_noop_entry(raft: &mut Raft<SafeMemStorage>) {
-        assert_eq!(raft.state, StateType::Leader, "it should only be used when it is the leader");
+        assert_eq!(
+            raft.state,
+            StateType::Leader,
+            "it should only be used when it is the leader"
+        );
         raft.bcast_append();
-    
+
         // simulate the response of msgApp
         let msgs = read_message(raft);
         for m in msgs {
-            assert!(m.field_type == MsgApp && m.entries.len() == 1 && !m.entries.first().unwrap().Data.is_empty(), "not a message to append noop empty");
+            assert!(
+                m.field_type == MsgApp
+                    && m.entries.len() == 1
+                    && m.entries.first().unwrap().Data.is_empty(),
+                "not a message to append noop empty"
+            );
             raft.step(accept_and_reply(m));
         }
-    
+
         // ignore future messages to refresh followers' commit index
         read_message(raft);
-        let unstable_entries = raft.raft_log.unstable_entries().iter().map(|entry| entry.clone()).collect::<Vec<_>>();
+        let unstable_entries = raft
+            .raft_log
+            .unstable_entries()
+            .iter()
+            .map(|entry| entry.clone())
+            .collect::<Vec<_>>();
+        info!("---> {:?}, {}", unstable_entries, raft.raft_log.committed);
         raft.raft_log.storage.wl().append(unstable_entries);
         raft.raft_log.applied_to(raft.raft_log.committed);
-        raft.raft_log.stable_to(raft.raft_log.last_index(), raft.raft_log.last_term());
+        raft.raft_log
+            .stable_to(raft.raft_log.last_index(), raft.raft_log.last_term());
+        info!("---> {}", raft.raft_log.committed);
     }
 
     fn accept_and_reply(m: Message) -> Message {
@@ -558,7 +575,7 @@ mod tests {
             from: m.to,
             to: m.from,
             term: m.term,
-            field_type: MsgApp,
+            field_type: MsgAppResp,
             ..Default::default()
         }
     }
