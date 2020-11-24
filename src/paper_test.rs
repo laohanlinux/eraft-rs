@@ -575,6 +575,7 @@ mod tests {
             from: m.to,
             to: m.from,
             term: m.term,
+            index: m.index,
             field_type: MsgAppResp,
             ..Default::default()
         }

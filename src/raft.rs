@@ -489,6 +489,7 @@ impl<S: Storage> Raft<S> {
     fn send(&mut self, mut m: Message) {
         if m.from == NONE {
             m.from = self.id;
+            info!("sent")
         }
         let msg_type = m.field_type;
         if msg_type == MsgVote
@@ -561,13 +562,14 @@ impl<S: Storage> Raft<S> {
         let term = self.raft_log.term(pr.next - 1);
         let ents = self.raft_log.entries(pr.next, self.max_msg_size);
         if ents.as_ref().map_or_else(|_| true, |ents| ents.is_empty()) && !send_if_empty {
-            debug!(
+            warn!(
                 "ignore send append from, send_if_empty={}, to={:0x}",
                 send_if_empty, m.to
             );
             return false;
         }
         if term.is_err() || ents.is_err() {
+            info!("term or ents is invalid, ready to sync handle");
             // send snapshot if we failed to get term or entries
             if !pr.recent_active {
                 debug!(
@@ -619,6 +621,7 @@ impl<S: Storage> Raft<S> {
             m.field_type = MsgApp;
             // msg.index is the current node lasted index, so `sub - 1`
             m.index = pr.next - 1;
+            info!("<<<<<<<<<<<<<<<<<<<,  {:?}", m);
             // msg.logTerm is the current node lasted term.
             m.logTerm = term;
             m.entries = RepeatedField::from_vec(ents);
@@ -804,6 +807,7 @@ impl<S: Storage> Raft<S> {
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
         self.prs.progress.must_get_mut(&self.id).maybe_update(li);
+        info!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<{:?}", self.prs.progress.must_get(&self.id));
         self.maybe_commit();
         true
     }
@@ -1966,7 +1970,7 @@ impl<S: Storage> Raft<S> {
 
     fn callback_leader_app_resp(&mut self, m: Message) -> Result<(), RaftError> {
         debug!("call back leader app resp, from: {:?}", m);
-        let pr = self.prs.progress.must_get_mut(&m.get_from());
+        let pr = self.prs.progress.must_get_mut(&m.from);
         pr.recent_active = true;
         if m.get_reject() {
             info!(
@@ -1994,6 +1998,7 @@ impl<S: Storage> Raft<S> {
 
         let old_paused = pr.is_paused();
         if !pr.maybe_update(m.get_index()) {
+            info!("-------------------------------------》|| {}", m.index);
             return Ok(());
         }
         match pr.state {

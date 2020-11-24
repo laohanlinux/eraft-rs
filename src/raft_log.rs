@@ -320,8 +320,10 @@ impl<T: Storage> RaftLog<T> {
     pub(crate) fn maybe_commit(&mut self, max_index: u64, term: u64) -> bool {
         if max_index > self.committed && self.term(max_index).map_or(false, |t| t == term) {
             self.commit_to(max_index);
+            debug!("commit log, max_index: {}", max_index);
             return true;
         }
+        debug!("can not commit log, max_index: {}, term: {}", max_index, term);
         false
     }
 
