@@ -433,7 +433,7 @@ impl<S: Storage> Raft<S> {
             },
             &cs,
         )
-        .unwrap();
+            .unwrap();
         let s_tc = raft.switch_to_config(cfg, prs);
         assert!(equivalent(&cs, &s_tc).is_ok());
 
@@ -603,16 +603,16 @@ impl<S: Storage> Raft<S> {
                     );
                 }
                 Err(e)
-                    if e == RaftLogError::FromStorage(
-                        StorageError::SnapshotTemporarilyUnavailable,
-                    ) =>
-                {
-                    debug!(
+                if e == RaftLogError::FromStorage(
+                    StorageError::SnapshotTemporarilyUnavailable,
+                ) =>
+                    {
+                        debug!(
                             "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
                             self.id, to
                         );
-                    return false;
-                }
+                        return false;
+                    }
                 Err(e) => panic!("{:?}", e), // TODO(bdarnell)
             }
         } else {
@@ -621,7 +621,6 @@ impl<S: Storage> Raft<S> {
             m.field_type = MsgApp;
             // msg.index is the current node lasted index, so `sub - 1`
             m.index = pr.next - 1;
-            info!("<<<<<<<<<<<<<<<<<<<,  {:?}", m);
             // msg.logTerm is the current node lasted term.
             m.logTerm = term;
             m.entries = RepeatedField::from_vec(ents);
@@ -680,7 +679,7 @@ impl<S: Storage> Raft<S> {
 
     // sends RPC, with entries to all peers that are not up-to-date
     // according to the progress recorded in self.prs.
-    pub (crate) fn bcast_append(&mut self) {
+    pub(crate) fn bcast_append(&mut self) {
         let ids = self.prs.visit_nodes();
         let cur_id = self.id;
         for id in ids.iter().filter(|id| **id != cur_id) {
@@ -807,7 +806,6 @@ impl<S: Storage> Raft<S> {
         // use latest "last" index after truncate/append
         let li = self.raft_log.append(es);
         self.prs.progress.must_get_mut(&self.id).maybe_update(li);
-        info!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<{:?}", self.prs.progress.must_get(&self.id));
         self.maybe_commit();
         true
     }
@@ -1432,10 +1430,10 @@ impl<S: Storage> Raft<S> {
             },
             cs,
         )
-        // This should never happen. Either there's a bug in our config change
-        // handling or the client corrupted the conf change.
-        .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
-        .unwrap();
+            // This should never happen. Either there's a bug in our config change
+            // handling or the client corrupted the conf change.
+            .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
+            .unwrap();
         equivalent(cs, &self.switch_to_config(cfg, prs)).unwrap();
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded
@@ -1755,10 +1753,10 @@ impl<S: Storage> Raft<S> {
                         }
                     }
                 }
+
                 if !self.append_entry(m.mut_entries()) {
                     return Err(RaftError::ProposalDropped);
                 }
-
                 self.bcast_append();
                 return Ok(());
             }
@@ -1998,7 +1996,6 @@ impl<S: Storage> Raft<S> {
 
         let old_paused = pr.is_paused();
         if !pr.maybe_update(m.get_index()) {
-            info!("-------------------------------------》|| {}", m.index);
             return Ok(());
         }
         match pr.state {

@@ -14,14 +14,17 @@
 mod tests {
     use maplit::hashmap;
     use nom::lib::std::collections::HashMap;
+    use bytes::Bytes;
 
-    use crate::mock::{new_empty_entry_set, new_entry_set, new_test_inner_node, read_message};
+    use crate::mock::{self, new_empty_entry_set, new_entry_set, new_test_inner_node, read_message, new_entry, MockEntry};
     use crate::raft::{Raft, StateType, NONE};
     use crate::raftpb::raft::MessageType::{
-        MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp,
+        MsgProp, MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp,
     };
+
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
+    use protobuf::RepeatedField;
 
     #[test]
     fn follower_update_term_from_message() {
@@ -464,6 +467,83 @@ mod tests {
         test_non_leader_election_timeout_non_conflict(StateType::Candidate);
     }
 
+    // tests that when receiving client proposals,
+    // the leader appends the proposal to its log as a new entry, then issues
+    // AppendEntries RPCs in parallel to each of the other servers to replicate
+    // the entry. Also, when sending an AppendEntries RPC, the leader includes
+    // the index and term of the entry in its log that immediately precedes
+    // the new entries.
+    // Also, it writes the new entry into stable storage.
+    // Reference: section 5.3
+    #[test]
+    fn leader_start_replication() {
+        flexi_logger::Logger::with_env().start();
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+        raft.become_candidate();
+        raft.become_leader();
+        commit_noop_entry(&mut raft);
+
+        let li = raft.raft_log.last_index();
+        let ents = mock::MocksEnts::from("some data").into();
+        raft.step(Message {
+            from: 0x1,
+            to: 0x1,
+            field_type: MsgProp,
+            entries: ents,
+            ..Default::default()
+        }).unwrap();
+
+        let g = raft.raft_log.last_index();
+        assert_eq!(g, li + 1, "last_index={}, want={}", g, li + 1);
+
+        let g = raft.raft_log.committed;
+        assert_eq!(g, li, "committed={}, want={}", g, li);
+
+        let mut msgs = read_message(&mut raft);
+        msgs.sort_by_key(|key| format!("{:?}", key));
+        let wents: Vec<Entry> = vec![Entry { Index: li + 1, Term: 1, Data: Bytes::from("some data"), ..Default::default() }];
+        let w_msgs = vec![
+            Message {
+                from: 0x1,
+                to: 0x2,
+                term: 1,
+                field_type: MsgApp,
+                index: li,
+                logTerm: 1,
+                commit: li,
+                entries: RepeatedField::from_vec(wents.clone()),
+                ..Default::default()
+            },
+            Message {
+                from: 0x1,
+                to: 0x3,
+                term: 1,
+                field_type: MsgApp,
+                index: li,
+                logTerm: 1,
+                commit: 1,
+                entries: RepeatedField::from_vec(wents.clone()),
+                ..Default::default()
+            }];
+        assert_eq!(msgs, w_msgs, "msgs = {:?}, want = {:?}", msgs, w_msgs);
+        let g = raft.raft_log.unstable_entries().iter().map(|entry| entry.clone()).collect::<Vec<_>>();
+        assert_eq!(g, wents, "ents = {:?}, want = {:?}", g, wents);
+    }
+
+    // tests that when the entry has been safely replicated,
+// the leader gives out the applied entries, which can be applied to its state
+// machine.
+// Also, the leader keeps track of the highest index it knows to be committed,
+// and it includes that index in future AppendEntries RPCs so that the other
+// servers eventually find out.
+// Reference: section 5.3
+    #[test]
+    fn leader_commit_entry() {}
+
+    fn ids_by_size(size: u64) -> Vec<u64> {
+        (1..=size).collect::<Vec<_>>()
+    }
+
     // tests that in most cases only a
     // single server(follower or candidate) will time out, which reduces the
     // likelihood of split vote in the new election.
@@ -512,27 +592,6 @@ mod tests {
         assert!(g <= 0.3, "probability of conflicts = {}, want <= 0.3", g);
     }
 
-    // tests that when receiving client proposals,
-    // the leader appends the proposal to its log as a new entry, then issues
-    // AppendEntries RPCs in parallel to each of the other servers to replicate
-    // the entry. Also, when sending an AppendEntries RPC, the leader includes
-    // the index and term of the entry in its log that immediately precedes
-    // the new entries.
-    // Also, it writes the new entry into stable storage.
-    // Reference: section 5.3
-    #[test]
-    fn leader_start_replication() {
-        flexi_logger::Logger::with_env().start();
-        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
-        raft.become_candidate();
-        raft.become_leader();
-        commit_noop_entry(&mut raft);
-    }
-
-    fn ids_by_size(size: u64) -> Vec<u64> {
-        (1..=size).collect::<Vec<_>>()
-    }
-
     fn commit_noop_entry(raft: &mut Raft<SafeMemStorage>) {
         assert_eq!(
             raft.state,
@@ -561,12 +620,10 @@ mod tests {
             .iter()
             .map(|entry| entry.clone())
             .collect::<Vec<_>>();
-        info!("---> {:?}, {}", unstable_entries, raft.raft_log.committed);
         raft.raft_log.storage.wl().append(unstable_entries);
         raft.raft_log.applied_to(raft.raft_log.committed);
         raft.raft_log
             .stable_to(raft.raft_log.last_index(), raft.raft_log.last_term());
-        info!("---> {}", raft.raft_log.committed);
     }
 
     fn accept_and_reply(m: Message) -> Message {
@@ -575,7 +632,7 @@ mod tests {
             from: m.to,
             to: m.from,
             term: m.term,
-            index: m.index,
+            index: m.index + m.entries.len() as u64,
             field_type: MsgAppResp,
             ..Default::default()
         }
