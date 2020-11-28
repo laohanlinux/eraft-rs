@@ -12,14 +12,17 @@
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use maplit::hashmap;
     use nom::lib::std::collections::HashMap;
-    use bytes::Bytes;
 
-    use crate::mock::{self, new_empty_entry_set, new_entry_set, new_test_inner_node, read_message, new_entry, MockEntry};
+    use crate::mock::{
+        self, new_empty_entry_set, new_entry, new_entry_set, new_test_inner_node, read_message,
+        MockEntry,
+    };
     use crate::raft::{Raft, StateType, NONE};
     use crate::raftpb::raft::MessageType::{
-        MsgProp, MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgVote, MsgVoteResp,
+        MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgProp, MsgVote, MsgVoteResp,
     };
 
     use crate::raftpb::raft::{Entry, HardState, Message};
@@ -491,7 +494,8 @@ mod tests {
             field_type: MsgProp,
             entries: ents,
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let g = raft.raft_log.last_index();
         assert_eq!(g, li + 1, "last_index={}, want={}", g, li + 1);
@@ -501,7 +505,12 @@ mod tests {
 
         let mut msgs = read_message(&mut raft);
         msgs.sort_by_key(|key| format!("{:?}", key));
-        let wents: Vec<Entry> = vec![Entry { Index: li + 1, Term: 1, Data: Bytes::from("some data"), ..Default::default() }];
+        let wents: Vec<Entry> = vec![Entry {
+            Index: li + 1,
+            Term: 1,
+            Data: Bytes::from("some data"),
+            ..Default::default()
+        }];
         let w_msgs = vec![
             Message {
                 from: 0x1,
@@ -524,21 +533,52 @@ mod tests {
                 commit: 1,
                 entries: RepeatedField::from_vec(wents.clone()),
                 ..Default::default()
-            }];
+            },
+        ];
         assert_eq!(msgs, w_msgs, "msgs = {:?}, want = {:?}", msgs, w_msgs);
-        let g = raft.raft_log.unstable_entries().iter().map(|entry| entry.clone()).collect::<Vec<_>>();
+        let g = raft
+            .raft_log
+            .unstable_entries()
+            .iter()
+            .map(|entry| entry.clone())
+            .collect::<Vec<_>>();
         assert_eq!(g, wents, "ents = {:?}, want = {:?}", g, wents);
     }
 
     // tests that when the entry has been safely replicated,
-// the leader gives out the applied entries, which can be applied to its state
-// machine.
-// Also, the leader keeps track of the highest index it knows to be committed,
-// and it includes that index in future AppendEntries RPCs so that the other
-// servers eventually find out.
-// Reference: section 5.3
+    // the leader gives out the applied entries, which can be applied to its state
+    // machine.
+    // Also, the leader keeps track of the highest index it knows to be committed,
+    // and it includes that index in future AppendEntries RPCs so that the other
+    // servers eventually find out.
+    // Reference: section 5.3
     #[test]
-    fn leader_commit_entry() {}
+    fn leader_commit_entry() {
+        let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+        raft.become_candidate();
+        raft.become_leader();
+        commit_noop_entry(&mut raft);
+        let li = raft.raft_log.last_index();
+        let ents = mock::MocksEnts::from("some data").into();
+
+        raft.step(Message {
+            from: 0x1,
+            to: 0x1,
+            field_type: MsgProp,
+            entries: ents,
+            ..Default::default()
+        });
+        for m in read_message(&mut raft) {
+            raft.step(accept_and_reply(m));
+        }
+        let g = raft.raft_log.committed;
+        assert_eq!(g, li + 1, "committed = {}, want {}", g, li);
+        let mut w_ents = vec![new_entry(li + 1, 1)];
+        w_ents[0].set_Data(Bytes::from("some data"));
+        for g in raft.raft_log.next_ents() {
+            assert_eq!(g, w_ents, "next_ents = {:?}, want {:?}", g, w_ents);
+        }
+    }
 
     fn ids_by_size(size: u64) -> Vec<u64> {
         (1..=size).collect::<Vec<_>>()
