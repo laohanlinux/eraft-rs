@@ -495,7 +495,7 @@ mod tests {
             entries: ents,
             ..Default::default()
         })
-        .unwrap();
+            .unwrap();
 
         let g = raft.raft_log.last_index();
         assert_eq!(g, li + 1, "last_index={}, want={}", g, li + 1);
@@ -575,8 +575,38 @@ mod tests {
         assert_eq!(g, li + 1, "committed = {}, want {}", g, li);
         let mut w_ents = vec![new_entry(li + 1, 1)];
         w_ents[0].set_Data(Bytes::from("some data"));
-        for g in raft.raft_log.next_ents() {
-            assert_eq!(g, w_ents, "next_ents = {:?}, want {:?}", g, w_ents);
+        let g = raft.raft_log.next_ents();
+        assert_eq!(g, w_ents, "next_ents = {:?}, want {:?}", g, w_ents);
+
+        let mut msgs = read_message(&mut raft);
+        msgs.sort_by_key(|key| format!("{:?}", key));
+        for (i, m) in msgs.iter().enumerate() {
+            let w = i + 2;
+            assert_eq!(m.to, w as u64, "to = {}, want {}", m.to, w);
+            assert_eq!(m.field_type, MsgProp, "type = {:?}, want = {:?}", m.field_type, MsgProp);
+            assert_eq!(m.commit, li + 1, "commit = {}, want = {}", m.commit, li + 1);
+        }
+    }
+
+    // Test that a log entry is committed once the
+    // leader that created the entry has replicated it on a majority of the servers.
+    // Reference: section 5.3
+    #[test]
+    fn leader_acknowledge_commit() {
+        let tests = vec![
+            (1, hashmap! {}, true),
+            (3, hashmap! {}, false),
+            (3, hashmap! {2 => true}, true),
+            (3, hashmap! {2 => true, 3 => true}, true),
+            (5, hashmap! {}, false),
+            (5, hashmap! {2 => true}, false),
+            (5, hashmap! {2 => true, 3 => true}, true),
+            (5, hashmap! {2 => true, 3 => true, 4 => true}, true),
+            (5, hashmap! {2 => true, 3 => true, 4 => true, 5 => true}, true),
+        ];
+
+        for (i, (size, acceptors, wack)) in tests.iter().enumerate() {
+
         }
     }
 
