@@ -130,7 +130,10 @@ impl MemoryStorage {
         i: u64,
         cs: T,
         data: Bytes,
-    ) -> Result<Snapshot, StorageError> where T: Into<Option<ConfState>> {
+    ) -> Result<Snapshot, StorageError>
+    where
+        T: Into<Option<ConfState>>,
+    {
         if i <= self.snapshot.get_metadata().get_index() {
             return Err(StorageError::SnapshotOfDate);
         }

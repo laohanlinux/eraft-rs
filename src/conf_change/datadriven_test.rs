@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod test {
-    use crate::nom_data_test::{walk, execute_test};
-    use crate::tracker::{ProgressTracker, Config};
     use crate::conf_change::conf_change::Changer;
-    use crate::raftpb::raft::{ConfChange, ConfChangeType, ConfChangeSingle};
-    use protobuf::ProtobufEnum;
+    use crate::nom_data_test::{execute_test, walk};
+    use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeType};
     use crate::tracker::progress::ProgressMap;
-    use std::convert::AsMut;
+    use crate::tracker::{Config, ProgressTracker};
     use env_logger::init;
+    use protobuf::ProtobufEnum;
+    use std::convert::AsMut;
 
     #[test]
     fn t_conf_data_driven() {
@@ -37,19 +37,13 @@ mod test {
                         "v" => {
                             cc.set_field_type(ConfChangeType::ConfChangeAddNode);
                         }
-                        "l" => {
-                            cc.set_field_type(ConfChangeType::ConfChangeAddLearnerNode)
-                        }
-                        "r" => {
-                            cc.set_field_type(ConfChangeType::ConfChangeRemoveNode)
-                        }
-                        "u" => {
-                            cc.set_field_type(ConfChangeType::ConfChangeUpdateNode)
-                        }
+                        "l" => cc.set_field_type(ConfChangeType::ConfChangeAddLearnerNode),
+                        "r" => cc.set_field_type(ConfChangeType::ConfChangeRemoveNode),
+                        "u" => cc.set_field_type(ConfChangeType::ConfChangeUpdateNode),
                         "autoleave" => {
                             auto_leave = cmd_arg.vals[0].parse().unwrap();
                         }
-                        u => panic!("unknown input: {}", u)
+                        u => panic!("unknown input: {}", u),
                     }
                     if cmd_arg.key.as_str() != "autoleave" {
                         let id = cmd_arg.vals[0].parse().unwrap();
@@ -61,30 +55,26 @@ mod test {
                 let mut cfg = Config::default();
                 let mut prs = ProgressMap::default();
                 match data.cmd.as_str() {
-                    "simple" => {
-                        match c.simple(&mut ccs) {
-                            Ok((new_cfg, new_prs)) => {
-                                cfg = new_cfg;
-                                prs = new_prs;
-                            }
-                            e => {
-                                c.last_index += 1;
-                                return e.unwrap_err();
-                            }
+                    "simple" => match c.simple(&mut ccs) {
+                        Ok((new_cfg, new_prs)) => {
+                            cfg = new_cfg;
+                            prs = new_prs;
                         }
-                    }
-                    "enter-joint" => {
-                        match c.enter_joint(auto_leave, &mut ccs) {
-                            Ok((new_cfg, new_prs)) => {
-                                cfg = new_cfg;
-                                prs = new_prs;
-                            }
-                            e => {
-                                c.last_index += 1;
-                                return e.unwrap_err();
-                            }
+                        e => {
+                            c.last_index += 1;
+                            return e.unwrap_err();
                         }
-                    }
+                    },
+                    "enter-joint" => match c.enter_joint(auto_leave, &mut ccs) {
+                        Ok((new_cfg, new_prs)) => {
+                            cfg = new_cfg;
+                            prs = new_prs;
+                        }
+                        e => {
+                            c.last_index += 1;
+                            return e.unwrap_err();
+                        }
+                    },
                     "leave-joint" => {
                         info!("ccs {:?}", ccs);
                         if !ccs.is_empty() {
@@ -101,7 +91,7 @@ mod test {
                             }
                         }
                     }
-                    u => panic!("unknown command: {}", u)
+                    u => panic!("unknown command: {}", u),
                 }
                 c.tracker.config = cfg;
                 c.tracker.progress = prs;

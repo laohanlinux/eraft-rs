@@ -433,7 +433,7 @@ impl<S: Storage> Raft<S> {
             },
             &cs,
         )
-            .unwrap();
+        .unwrap();
         let s_tc = raft.switch_to_config(cfg, prs);
         assert!(equivalent(&cs, &s_tc).is_ok());
 
@@ -603,16 +603,16 @@ impl<S: Storage> Raft<S> {
                     );
                 }
                 Err(e)
-                if e == RaftLogError::FromStorage(
-                    StorageError::SnapshotTemporarilyUnavailable,
-                ) =>
-                    {
-                        debug!(
+                    if e == RaftLogError::FromStorage(
+                        StorageError::SnapshotTemporarilyUnavailable,
+                    ) =>
+                {
+                    debug!(
                             "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
                             self.id, to
                         );
-                        return false;
-                    }
+                    return false;
+                }
                 Err(e) => panic!("{:?}", e), // TODO(bdarnell)
             }
         } else {
@@ -1430,10 +1430,10 @@ impl<S: Storage> Raft<S> {
             },
             cs,
         )
-            // This should never happen. Either there's a bug in our config change
-            // handling or the client corrupted the conf change.
-            .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
-            .unwrap();
+        // This should never happen. Either there's a bug in our config change
+        // handling or the client corrupted the conf change.
+        .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
+        .unwrap();
         equivalent(cs, &self.switch_to_config(cfg, prs)).unwrap();
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded

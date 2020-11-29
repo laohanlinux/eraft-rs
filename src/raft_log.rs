@@ -323,7 +323,10 @@ impl<T: Storage> RaftLog<T> {
             debug!("commit log, max_index: {}", max_index);
             return true;
         }
-        debug!("can not commit log, max_index: {}, term: {}", max_index, term);
+        debug!(
+            "can not commit log, max_index: {}, term: {}",
+            max_index, term
+        );
         false
     }
 

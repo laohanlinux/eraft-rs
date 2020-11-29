@@ -12,18 +12,17 @@
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-    use maplit::hashmap;
-    use nom::lib::std::collections::HashMap;
-
     use crate::mock::{
         self, new_empty_entry_set, new_entry, new_entry_set, new_test_inner_node, read_message,
-        MockEntry,
+        MockEntry, MocksEnts,
     };
     use crate::raft::{Raft, StateType, NONE};
     use crate::raftpb::raft::MessageType::{
         MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgProp, MsgVote, MsgVoteResp,
     };
+    use bytes::Bytes;
+    use maplit::hashmap;
+    use nom::lib::std::collections::HashMap;
 
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
@@ -495,7 +494,7 @@ mod tests {
             entries: ents,
             ..Default::default()
         })
-            .unwrap();
+        .unwrap();
 
         let g = raft.raft_log.last_index();
         assert_eq!(g, li + 1, "last_index={}, want={}", g, li + 1);
@@ -561,6 +560,7 @@ mod tests {
         let li = raft.raft_log.last_index();
         let ents = mock::MocksEnts::from("some data").into();
 
+        // It just committed
         raft.step(Message {
             from: 0x1,
             to: 0x1,
@@ -583,7 +583,11 @@ mod tests {
         for (i, m) in msgs.iter().enumerate() {
             let w = i + 2;
             assert_eq!(m.to, w as u64, "to = {}, want {}", m.to, w);
-            assert_eq!(m.field_type, MsgProp, "type = {:?}, want = {:?}", m.field_type, MsgProp);
+            assert_eq!(
+                m.field_type, MsgApp,
+                "type = {:?}, want = {:?}",
+                m.field_type, MsgProp
+            );
             assert_eq!(m.commit, li + 1, "commit = {}, want = {}", m.commit, li + 1);
         }
     }
@@ -602,11 +606,37 @@ mod tests {
             (5, hashmap! {2 => true}, false),
             (5, hashmap! {2 => true, 3 => true}, true),
             (5, hashmap! {2 => true, 3 => true, 4 => true}, true),
-            (5, hashmap! {2 => true, 3 => true, 4 => true, 5 => true}, true),
+            (
+                5,
+                hashmap! {2 => true, 3 => true, 4 => true, 5 => true},
+                true,
+            ),
         ];
 
         for (i, (size, acceptors, wack)) in tests.iter().enumerate() {
+            let mut raft =
+                new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+            raft.become_candidate();
+            raft.become_leader();
+            commit_noop_entry(&mut raft);
+            let li = raft.raft_log.last_index();
+            let ents = MocksEnts::from("some data").into();
+            raft.step(Message {
+                from: 0x1,
+                to: 0x1,
+                field_type: MsgProp,
+                entries: ents,
+                ..Default::default()
+            });
 
+            for m in read_message(&mut raft){
+                if acceptors.contains_key(&m.to) {
+                    raft.step(accept_and_reply(m));
+                }
+            }
+
+            let g = raft.raft_log.committed > li;
+            assert_eq!(g, *wack, "#{}: ack commit={}, want {}", i, g, wack);
         }
     }
 
@@ -662,6 +692,7 @@ mod tests {
         assert!(g <= 0.3, "probability of conflicts = {}, want <= 0.3", g);
     }
 
+    // NOTE: the log has committed and applied
     fn commit_noop_entry(raft: &mut Raft<SafeMemStorage>) {
         assert_eq!(
             raft.state,
@@ -679,7 +710,7 @@ mod tests {
                     && m.entries.first().unwrap().Data.is_empty(),
                 "not a message to append noop empty"
             );
-            raft.step(accept_and_reply(m));
+            raft.step(accept_and_reply(m)).unwrap();
         }
 
         // ignore future messages to refresh followers' commit index
@@ -690,7 +721,7 @@ mod tests {
             .iter()
             .map(|entry| entry.clone())
             .collect::<Vec<_>>();
-        raft.raft_log.storage.wl().append(unstable_entries);
+        raft.raft_log.storage.wl().append(unstable_entries).unwrap();
         raft.raft_log.applied_to(raft.raft_log.committed);
         raft.raft_log
             .stable_to(raft.raft_log.last_index(), raft.raft_log.last_term());

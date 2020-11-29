@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_test_raw_node, MocksEnts, read_message, new_test_core_node, new_test_inner_node};
-    use crate::storage::SafeMemStorage;
-    use crate::raftpb::raft::{Snapshot, SnapshotMetadata, ConfState, Message};
-    use protobuf::{SingularField, SingularPtrField};
+    use crate::mock::{
+        new_test_core_node, new_test_inner_node, new_test_raw_node, read_message, MocksEnts,
+    };
     use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp, MsgSnapStatus};
+    use crate::raftpb::raft::{ConfState, Message, Snapshot, SnapshotMetadata};
+    use crate::storage::SafeMemStorage;
     use crate::tracker::state::StateType;
+    use protobuf::{SingularField, SingularPtrField};
 
     #[test]
     fn sending_snapshot_set_pending_snapshot() {
@@ -37,10 +38,21 @@ mod tests {
         raft.prs.progress.must_get_mut(&0x2).next = first_index;
 
         let index = raft.prs.progress.must_get(&0x2).next - 1;
-        raft.step(Message { from: 0x2, to: 0x1, field_type: MsgAppResp, index, reject: true, ..Default::default() });
+        raft.step(Message {
+            from: 0x2,
+            to: 0x1,
+            field_type: MsgAppResp,
+            index,
+            reject: true,
+            ..Default::default()
+        });
 
         let pending_snapshot = raft.prs.progress.must_get(&0x2).pending_snapshot;
-        assert_eq!(pending_snapshot, 11, "pending_snapshot = {}, want 11", pending_snapshot);
+        assert_eq!(
+            pending_snapshot, 11,
+            "pending_snapshot = {}, want 11",
+            pending_snapshot
+        );
     }
 
     #[test]
@@ -54,7 +66,13 @@ mod tests {
 
         raft.prs.progress.must_get_mut(&0x2).become_snapshot(11);
 
-        raft.step(Message { from: 0x1, to: 0x1, field_type: MsgProp, entries: MocksEnts::from("somedata").into(), ..Default::default() });
+        raft.step(Message {
+            from: 0x1,
+            to: 0x1,
+            field_type: MsgProp,
+            entries: MocksEnts::from("somedata").into(),
+            ..Default::default()
+        });
         let msg = read_message(&mut raft);
         assert!(msg.is_empty(), "len(msgs) = {}, want 0", msg.len());
     }
@@ -70,10 +88,30 @@ mod tests {
 
         raft.prs.progress.must_get_mut(&0x2).next = 1;
         raft.prs.progress.must_get_mut(&0x2).become_snapshot(11);
-        raft.step(Message { from: 0x2, to: 0x1, field_type: MsgSnapStatus, reject: true, ..Default::default() });
-        assert_eq!(raft.prs.progress.must_get(&0x2).pending_snapshot, 0, "pending_snapshot = {}, want 0", raft.prs.progress.must_get(&0x2).pending_snapshot);
-        assert_eq!(raft.prs.progress.must_get(&0x2).next, 1, "next = {}, want 1", raft.prs.progress.must_get(&0x2).next);
-        assert!(raft.prs.progress.must_get(&0x2).probe_sent, "probe_sent = {}, want true", raft.prs.progress.must_get(&0x2).probe_sent);
+        raft.step(Message {
+            from: 0x2,
+            to: 0x1,
+            field_type: MsgSnapStatus,
+            reject: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            raft.prs.progress.must_get(&0x2).pending_snapshot,
+            0,
+            "pending_snapshot = {}, want 0",
+            raft.prs.progress.must_get(&0x2).pending_snapshot
+        );
+        assert_eq!(
+            raft.prs.progress.must_get(&0x2).next,
+            1,
+            "next = {}, want 1",
+            raft.prs.progress.must_get(&0x2).next
+        );
+        assert!(
+            raft.prs.progress.must_get(&0x2).probe_sent,
+            "probe_sent = {}, want true",
+            raft.prs.progress.must_get(&0x2).probe_sent
+        );
     }
 
     #[test]
@@ -88,10 +126,20 @@ mod tests {
         raft.prs.progress.must_get_mut(&0x2).next = 2;
         raft.prs.progress.must_get_mut(&0x2).become_snapshot(11);
 
-        raft.step(Message{from: 0x2, to: 0x1, field_type: MsgSnapStatus, reject: false, ..Default::default()});
+        raft.step(Message {
+            from: 0x2,
+            to: 0x1,
+            field_type: MsgSnapStatus,
+            reject: false,
+            ..Default::default()
+        });
 
         let pending_snapshot = raft.prs.progress.must_get(&0x2).pending_snapshot;
-        assert_eq!(pending_snapshot, 0, "pending_snapshot = {}, want 0", pending_snapshot);
+        assert_eq!(
+            pending_snapshot, 0,
+            "pending_snapshot = {}, want 0",
+            pending_snapshot
+        );
         let next = raft.prs.progress.must_get(&0x2).next;
         assert_eq!(next, 12, "next = {}, want 0", next);
         let probe_sent = raft.prs.progress.must_get(&0x2).probe_sent;
@@ -111,9 +159,19 @@ mod tests {
         // A successful MsgAppResp that has a higher/equal index than the
         // pending snapshot should abort the pending snapshot.
         info!("last index {}", raft.raft_log.last_index());
-        raft.step(Message{from: 0x2, to: 0x1, field_type: MsgAppResp, index: 11, ..Default::default()});
+        raft.step(Message {
+            from: 0x2,
+            to: 0x1,
+            field_type: MsgAppResp,
+            index: 11,
+            ..Default::default()
+        });
         let pending_snapshot = raft.prs.progress.must_get(&0x2).pending_snapshot;
-        assert_eq!(pending_snapshot, 0, "pending_snapshot = {}, want 0", pending_snapshot);
+        assert_eq!(
+            pending_snapshot, 0,
+            "pending_snapshot = {}, want 0",
+            pending_snapshot
+        );
 
         // The follower entered StateReplicate and the leader send an append
         // and optimistically updated the progress (so we see 13 instead of 12).
@@ -129,7 +187,12 @@ mod tests {
         let mut snap = Snapshot::new();
         let mut conf_state = ConfState::new();
         conf_state.set_voters(vec![1, 2]);
-        snap.set_metadata(SnapshotMetadata { index: 11, term: 11, conf_state: SingularPtrField::from(Some(conf_state)), ..Default::default() });
+        snap.set_metadata(SnapshotMetadata {
+            index: 11,
+            term: 11,
+            conf_state: SingularPtrField::from(Some(conf_state)),
+            ..Default::default()
+        });
         snap
     }
 }

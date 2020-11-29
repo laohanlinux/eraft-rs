@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 #[cfg(test)]
 mod tests {
-    use crate::raftpb::raft::{ConfChangeType, ConfChangeSingle, ConfChange};
     use crate::conf_change::conf_change::Changer;
-    use std::fmt::Error;
-    use rand::Rng;
-    use protobuf::ProtobufEnum;
+    use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeType};
     use crate::tracker::ProgressTracker;
+    use protobuf::ProtobufEnum;
+    use rand::Rng;
+    use std::fmt::Error;
 
     // uses quick_check to verify that simple and joint config
     // changes arrive at the same result.
@@ -36,7 +35,10 @@ mod tests {
             let (simple_change, mut ccs) = wrapper().unwrap();
             let mut epoch_cc = ccs.drain(..1).collect::<Vec<_>>();
             let mut tr = ProgressTracker::new(10);
-            let mut c = Changer { tracker: tr, last_index: 10 };
+            let mut c = Changer {
+                tracker: tr,
+                last_index: 10,
+            };
             let ret = c.simple(&mut epoch_cc);
             assert!(ret.is_ok());
             c.tracker.config = ret.as_ref().unwrap().0.clone();
@@ -47,7 +49,11 @@ mod tests {
         }
     }
 
-    fn gen_cc(num: impl Fn() -> usize, id: impl Fn() -> u64, typ: impl Fn() -> ConfChangeType) -> Vec<ConfChangeSingle> {
+    fn gen_cc(
+        num: impl Fn() -> usize,
+        id: impl Fn() -> u64,
+        typ: impl Fn() -> ConfChangeType,
+    ) -> Vec<ConfChangeSingle> {
         let mut ccs = Vec::new();
         let n = num();
         for i in 0..n {
@@ -60,18 +66,22 @@ mod tests {
     }
 
     fn wrapper() -> Result<(Changer, Vec<ConfChangeSingle>), String> {
-        let mut ccs = gen_cc(|| -> usize {
-            let mut r = rand::thread_rng();
-            r.gen_range(1, 9) + 1
-        }, || -> u64 {
-            let mut r = rand::thread_rng();
-            r.gen_range(1, 9) + 1
-        }, || -> ConfChangeType{
-            let mut r = rand::thread_rng();
-            let n = ConfChangeType::values().len();
-            let em = r.gen_range(0, n);
-            ConfChangeType::from_i32(em as i32).unwrap()
-        });
+        let mut ccs = gen_cc(
+            || -> usize {
+                let mut r = rand::thread_rng();
+                r.gen_range(1, 9) + 1
+            },
+            || -> u64 {
+                let mut r = rand::thread_rng();
+                r.gen_range(1, 9) + 1
+            },
+            || -> ConfChangeType {
+                let mut r = rand::thread_rng();
+                let n = ConfChangeType::values().len();
+                let em = r.gen_range(0, n);
+                ConfChangeType::from_i32(em as i32).unwrap()
+            },
+        );
         let mut epoch_cc = ConfChangeSingle::new();
         epoch_cc.set_node_id(1);
         epoch_cc.set_field_type(ConfChangeType::ConfChangeAddNode);
@@ -81,7 +91,10 @@ mod tests {
         let ccs_copy = ccs.clone();
 
         let mut tr = ProgressTracker::new(10);
-        let mut c = Changer { tracker: tr, last_index: 10 };
+        let mut c = Changer {
+            tracker: tr,
+            last_index: 10,
+        };
         with_simple(&mut c, &mut ccs).map(|_| (c, ccs_copy))
     }
 

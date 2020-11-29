@@ -123,7 +123,7 @@ impl Ready {
         prev_soft_st: T,
         prev_hard_st: HardState,
     ) -> Ready {
-        let prev_soft_st =  prev_soft_st.into();
+        let prev_soft_st = prev_soft_st.into();
         let mut ready = Ready {
             soft_state: prev_soft_st.clone(),
             hard_state: prev_hard_st.clone(),
@@ -780,7 +780,7 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::{new_test_raw_node};
+    use crate::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::MsgProp;
