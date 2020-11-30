@@ -27,6 +27,7 @@ mod tests {
     use crate::raftpb::raft::{Entry, HardState, Message};
     use crate::storage::{SafeMemStorage, Storage};
     use protobuf::RepeatedField;
+    use std::ptr::read;
 
     #[test]
     fn follower_update_term_from_message() {
@@ -615,7 +616,7 @@ mod tests {
 
         for (i, (size, acceptors, wack)) in tests.iter().enumerate() {
             let mut raft =
-                new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+                new_test_inner_node(0x1, ids_by_size(*size), 10, 1, SafeMemStorage::new());
             raft.become_candidate();
             raft.become_leader();
             commit_noop_entry(&mut raft);
@@ -629,7 +630,7 @@ mod tests {
                 ..Default::default()
             });
 
-            for m in read_message(&mut raft){
+            for m in read_message(&mut raft) {
                 if acceptors.contains_key(&m.to) {
                     raft.step(accept_and_reply(m));
                 }
@@ -637,6 +638,50 @@ mod tests {
 
             let g = raft.raft_log.committed > li;
             assert_eq!(g, *wack, "#{}: ack commit={}, want {}", i, g, wack);
+        }
+    }
+
+    // tests that when leader commits a log entry
+    // it also commits all preceding entries in the leader's log, including
+    // entries created by previous leaders.
+    // Also, it applies the entry to its local state machine (in log order).
+    // Reference: section 5.3
+    #[test]
+    fn leader_commit_preceding_entries() {
+        let tests = vec![
+            new_entry_set(vec![]),
+            new_entry_set(vec![(1, 2)]),
+            new_entry_set(vec![(1, 1), (2, 2)]),
+            new_entry_set(vec![(1, 1)]),
+        ];
+
+        for (i, tt) in tests.iter().enumerate() {
+            let mut storage = SafeMemStorage::new();
+            storage.wl().append(tt.clone());
+            let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, storage);
+            raft.load_state(&HardState {
+                term: 2,
+                ..Default::default()
+            });
+            raft.become_candidate();
+            raft.become_leader();
+            raft.step(Message {
+                from: 0x1,
+                to: 0x1,
+                field_type: MsgProp,
+                entries: MocksEnts::from("some data").into(),
+                ..Default::default()
+            });
+
+            for m in read_message(&mut raft) {
+                raft.step(accept_and_reply(m));
+            }
+            let li = tt.len();
+            let mut w_ents = tt.clone();
+            w_ents.push(new_entry((li + 1) as u64, 3));
+            w_ents.push(MockEntry::from("some data").into());
+            let g = raft.raft_log.next_ents();
+            assert_eq!(g, w_ents, "#{}: ents = {:?}, want = {:?}", i, g, w_ents);
         }
     }
 
