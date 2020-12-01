@@ -175,6 +175,7 @@ impl<T: Storage> RaftLog<T> {
     /// next_ents returns all the available entries for execution.
     /// If applied is smaller than the index of snapshot, it returns all committed
     /// entries after the index of snapshot.
+    /// ME: snapshot <= applied <= commit or applied <= snapshot <= commit
     pub fn next_ents(&self) -> Vec<Entry> {
         let off = self.first_index().max(self.applied + 1);
         if self.committed + 1 > off {

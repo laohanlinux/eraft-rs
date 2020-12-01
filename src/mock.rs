@@ -66,8 +66,10 @@ impl From<Vec<u8>> for MockEntry {
 
 impl From<&str> for MockEntry {
     fn from(buf: &str) -> Self {
-        let v = Vec::from(buf);
-        MockEntry::from(buf)
+        let data = Vec::from(buf);
+        let mut entry = Entry::new();
+        entry.set_Data(Bytes::from(data));
+        MockEntry(entry)
     }
 }
 
@@ -82,6 +84,15 @@ pub fn new_entry_set(set: Vec<(u64, u64)>) -> Vec<Entry> {
     set.iter()
         .map(|(index, term)| new_entry(*index, *term))
         .collect()
+}
+
+pub fn new_entry_set2(set: Vec<(u64, u64, &str)>) -> Vec<Entry> {
+    set.iter().map(|(index, term, data)| {
+        let mut entry = new_entry(*index, *term);
+        let data = Vec::from(*data);
+        entry.set_Data(Bytes::from(data));
+        entry
+    }).collect()
 }
 
 pub fn new_empty_entry_set() -> Vec<Entry> {

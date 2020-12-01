@@ -711,6 +711,7 @@ impl<S: Storage> Raft<S> {
         }
     }
 
+    // execute applied
     pub(crate) fn advance(&mut self, rd: &Ready) {
         self.reduce_uncommitted_size(&rd.entries);
         // If entries were applied (or a snapshot), update our cursor for

@@ -12,10 +12,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{
-        self, new_empty_entry_set, new_entry, new_entry_set, new_test_inner_node, read_message,
-        MockEntry, MocksEnts,
-    };
+    use crate::mock::{self, new_empty_entry_set, new_entry, new_entry_set, new_test_inner_node, read_message, MockEntry, MocksEnts, new_entry_set2};
     use crate::raft::{Raft, StateType, NONE};
     use crate::raftpb::raft::MessageType::{
         MsgApp, MsgAppResp, MsgHeartbeat, MsgHup, MsgProp, MsgVote, MsgVoteResp,
@@ -495,7 +492,7 @@ mod tests {
             entries: ents,
             ..Default::default()
         })
-        .unwrap();
+            .unwrap();
 
         let g = raft.raft_log.last_index();
         assert_eq!(g, li + 1, "last_index={}, want={}", g, li + 1);
@@ -648,6 +645,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn leader_commit_preceding_entries() {
+        flexi_logger::Logger::with_env().start();
         let tests = vec![
             new_entry_set(vec![]),
             new_entry_set(vec![(1, 2)]),
@@ -664,7 +662,7 @@ mod tests {
                 ..Default::default()
             });
             raft.become_candidate();
-            raft.become_leader();
+            raft.become_leader(); // generator a noo-op log
             raft.step(Message {
                 from: 0x1,
                 to: 0x1,
@@ -678,10 +676,37 @@ mod tests {
             }
             let li = tt.len();
             let mut w_ents = tt.clone();
-            w_ents.push(new_entry((li + 1) as u64, 3));
-            w_ents.push(MockEntry::from("some data").into());
+            w_ents.push(new_entry((li + 1) as u64, 3)); // leader noo-op log
+            let mut entry = new_entry((li + 2) as u64, 3);
+            entry.set_Data(Bytes::from(Vec::from("some data"))); // Props
+            w_ents.push(entry);
             let g = raft.raft_log.next_ents();
             assert_eq!(g, w_ents, "#{}: ents = {:?}, want = {:?}", i, g, w_ents);
+        }
+    }
+
+    // tests that once a follower learns that a log entry
+    // is committed, it applies the entry to its local state machine (in log order).
+    // Reference: section 5.3
+    #[test]
+    fn follower_commit_entry() {
+        flexi_logger::Logger::with_env().start();
+        let tests = vec![
+            (new_entry_set2(vec![(1, 1, "some data")]), 1),
+            (new_entry_set2(vec![(1, 1, "some data"), (2, 1, "some data2")]), 2),
+            (new_entry_set2(vec![(1, 1, "some data"), (2, 1, "some data2")]), 2),
+            (new_entry_set2(vec![(1, 1, "some data"), (2, 1, "some data2")]), 1),
+        ];
+
+        for (i, (entries, commit)) in tests.iter().enumerate() {
+            let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
+            raft.become_follower(1, 0x2);
+            raft.step(Message { from: 0x2, to: 0x1, field_type: MsgApp, term: 1, entries: RepeatedField::from_vec(entries.clone()), commit: (*commit) as u64, ..Default::default() });
+            let g = raft.raft_log.committed;
+            assert_eq!(g, *commit, "#{}: committed={}, want {}", i, g, commit);
+            let w_ents = &entries[..(*commit as usize)];
+            let g = raft.raft_log.next_ents();
+            assert_eq!(&g, w_ents, "#{}: next_ents={:?}, want {:?}", i, g, w_ents);
         }
     }
 
