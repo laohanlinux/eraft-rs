@@ -711,16 +711,16 @@ mod tests {
     }
 
     // tests that if the follower does not find an
-    // entry in its log with the same idnex and the term as the one in `AppendEntries` RPC,
+    // entry in its log with the same index and the term as the one in `AppendEntries` RPC,
     // then it refuses the new entries. Otherwise it replies that it accepts the 
     // append entries.
     // Reference: section 5.3 
     #[test]
-    fn follower_check_msg_app(){
-        flexi_logger::Logger::with_env().start(); 
-        let ents = new_entry_set(vec![(1,1), (2, 2)]); 
+    fn follower_check_msg_app() {
+        flexi_logger::Logger::with_env().start();
+        let ents = new_entry_set(vec![(1, 1), (2, 2)]);
         let tests = vec![
-            //match with committed entries
+            // match with committed entries
             (0, 0, 1, false, 0),
             (ents[0].Term, ents[0].Index, 1, false, 0),
             // match with uncommitted entries
@@ -729,19 +729,21 @@ mod tests {
             // unmatch with existing entry
             (ents[0].Term, ents[1].Index, ents[1].Index, true, 2),
             // unexpecting entry
-            (ents[1].Term + 1 , ents[1].Index + 1 , ents[1].Index + 1, true, 2),
+            (ents[1].Term + 1, ents[1].Index + 1, ents[1].Index + 1, true, 2),
         ];
 
         for (i, (term, index, w_index, w_reject, w_reject_hint)) in tests.iter().enumerate() {
             let mut storage = SafeMemStorage::new();
             storage.wl().append(ents.clone());
             let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, storage);
-            raft.load_state(&HardState{commit: 1, ..Default::default()});
+            raft.load_state(&HardState { commit: 1, ..Default::default() });
             raft.become_follower(2, 2);
-            
-            raft.step(Message{from: 0x2, to: 0x1, field_type: MsgApp, term: 2, logTerm: *term, index: *index, ..Default::default()});
-            
-            let msgs  = read_message(&mut raft);
+
+            raft.step(Message { from: 0x2, to: 0x1, field_type: MsgApp, term: 2, logTerm: *term, index: *index, ..Default::default() });
+
+            let msgs = read_message(&mut raft);
+            let w_msgs = vec![Message { from: 0x1, to: 0x2, field_type: MsgAppResp, term: 2, index: *w_index, reject: *w_reject, rejectHint: *w_reject_hint, ..Default::default() }];
+            assert_eq!(w_msgs, msgs, "#{}: msgs={:?}, want {:?}", i, msgs, w_msgs);
         }
     }
 
