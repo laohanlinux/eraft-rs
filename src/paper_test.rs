@@ -724,7 +724,7 @@ mod tests {
             (0, 0, 1, false, 0),
             (ents[0].Term, ents[0].Index, 1, false, 0),
             // match with uncommitted entries
-            (ents[0].Term, ents[0].Index, 2, false, 0),
+            (ents[1].Term, ents[1].Index, 2, false, 0),
 
             // unmatch with existing entry
             (ents[0].Term, ents[1].Index, ents[1].Index, true, 2),
@@ -744,6 +744,46 @@ mod tests {
             let msgs = read_message(&mut raft);
             let w_msgs = vec![Message { from: 0x1, to: 0x2, field_type: MsgAppResp, term: 2, index: *w_index, reject: *w_reject, rejectHint: *w_reject_hint, ..Default::default() }];
             assert_eq!(w_msgs, msgs, "#{}: msgs={:?}, want {:?}", i, msgs, w_msgs);
+        }
+    }
+
+    // tests that when AppendEntries RPC is valid,
+    // the follower will delete the existing conflict entry and all that follow it,
+    // and append any new entries not already in the log.
+    // Also, it writes the new entry into stable storage.
+    // Reference: section 5.3
+    #[test]
+    fn follower_append_entries() {
+        let tests = vec![
+            (2, 2,
+             new_entry_set(vec![(3, 3)]),
+             new_entry_set(vec![(1, 1), (2, 2), (3, 3)]),
+             new_entry_set(vec![(3, 3)])),
+            (1, 1,
+             new_entry_set(vec![(2, 3), (3, 4)]),
+             new_entry_set(vec![(1, 1), (2, 3), (3, 4)]),
+             new_entry_set(vec![(2, 3), (3, 4)])),
+            (0, 0,
+             new_entry_set(vec![(1, 1)]),
+             new_entry_set(vec![(1, 1), (2, 2)]),
+             new_entry_set(vec![])),
+            (0, 0,
+             new_entry_set(vec![(1, 3)]),
+             new_entry_set(vec![(1, 3)]),
+             new_entry_set(vec![(1, 3)]))];
+
+        for (i, (index, term, ents, w_ents, w_unstable)) in tests.iter().enumerate() {
+            let storage = SafeMemStorage::new();
+            storage.wl().append(new_entry_set(vec![(1, 1), (2, 2)])).unwrap();
+            let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, storage);
+            raft.become_follower(2, 0x2);
+            raft.step(Message { from: 0x2, to: 0x1, field_type: MsgApp, term: 2, logTerm: *term, index: *index, entries: RepeatedField::from_vec(ents.clone()), ..Default::default() });
+
+            let g = raft.raft_log.all_entries();
+            assert_eq!(&g, w_ents, "#{}, ents = {:?}, want = {:?}", i, &g, w_ents);
+
+            let g = raft.raft_log.unstable_entries();
+            assert_eq!(&g, w_unstable, "#{}, unstable_entries={:?}, want = {:?}", i, g, w_unstable);
         }
     }
 
