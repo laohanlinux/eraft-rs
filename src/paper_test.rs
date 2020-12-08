@@ -787,6 +787,62 @@ mod tests {
         }
     }
 
+    // tests that the leader could bring a follower's log
+    // into consistency with its own.
+    // Reference: section 5.3, figure 7
+    #[test]
+    fn leader_sync_follower() {
+        let ents = new_entry_set(vec![
+            (0, 0),
+            (1, 1), (2, 1), (3, 1),
+            (4, 4), (5, 4),
+            (6, 5), (7, 5),
+            (8, 6), (9, 6), (10, 6),
+        ]);
+
+        let term = 8;
+        let tests = vec![
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 4), (5, 4),
+                (6, 5), (7, 5),
+                (8, 6), (9, 6)]),
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 4)]),
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 4), (5, 4),
+                (6, 5), (7, 5),
+                (8, 6), (9, 6), (10, 6), (11, 6)]),
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 4), (5, 4),
+                (6, 5), (7, 5),
+                (8, 6), (9, 6), (10, 6),
+                (11, 7), (12, 7)]),
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 4), (5, 4), (6, 4), (7, 4)]),
+            new_entry_set(vec![
+                (0, 0),
+                (1, 1), (2, 1), (3, 1),
+                (4, 2), (5, 2), (6, 2),
+                (7, 3), (8, 3), (9, 3), (10, 3), (11, 3)])];
+
+        for (i, entries) in tests.iter().enumerate() {
+            let leader_storage = SafeMemStorage::new();
+            leader_storage.wl().append(entries.clone());
+            let mut lead = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, leader_storage);
+            lead.load_state(&HardState { commit: lead.raft_log.last_index(), term: lead.raft_log.term().unwrap(), ..Default::default() });
+        }
+    }
+
     fn ids_by_size(size: u64) -> Vec<u64> {
         (1..=size).collect::<Vec<_>>()
     }
