@@ -286,7 +286,7 @@ mod tests {
 
         for (i, (size, votes, state)) in tests.iter().enumerate() {
             let mut raft =
-                new_test_inner_node(0x1, ids_by_size(*size), 10, 1, SafeMemStorage::new());
+                new_test_inner_node(0x1, mock::ids_by_size(*size), 10, 1, SafeMemStorage::new());
             raft.step(Message {
                 from: 0x1,
                 to: 0x1,
@@ -613,7 +613,7 @@ mod tests {
 
         for (i, (size, acceptors, wack)) in tests.iter().enumerate() {
             let mut raft =
-                new_test_inner_node(0x1, ids_by_size(*size), 10, 1, SafeMemStorage::new());
+                new_test_inner_node(0x1, mock::ids_by_size(*size), 10, 1, SafeMemStorage::new());
             raft.become_candidate();
             raft.become_leader();
             commit_noop_entry(&mut raft);
@@ -839,12 +839,12 @@ mod tests {
             let leader_storage = SafeMemStorage::new();
             leader_storage.wl().append(entries.clone());
             let mut lead = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, leader_storage);
-            lead.load_state(&HardState { commit: lead.raft_log.last_index(), term: lead.raft_log.term().unwrap(), ..Default::default() });
+            lead.load_state(&HardState { commit: lead.raft_log.last_index(), term, ..Default::default() });
+            let follower_storage = SafeMemStorage::new();
+            follower_storage.wl().append(entries.clone());
+            let mut follow = new_test_inner_node(0x2, vec![0x1, 0x2, 0x3], 10, 1, follower_storage);
+            follow.load_state(&HardState { term: term - 1, ..Default::default() });
         }
-    }
-
-    fn ids_by_size(size: u64) -> Vec<u64> {
-        (1..=size).collect::<Vec<_>>()
     }
 
     // tests that in most cases only a
@@ -854,7 +854,7 @@ mod tests {
     fn test_non_leader_election_timeout_non_conflict(state: StateType) {
         let et = 10;
         let size = 5;
-        let ids = ids_by_size(size as u64);
+        let ids = mock::ids_by_size(size as u64);
         let mut rafts: Vec<Raft<SafeMemStorage>> = Vec::with_capacity(size);
         for idx in ids {
             rafts.push(new_test_inner_node(

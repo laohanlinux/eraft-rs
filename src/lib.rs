@@ -28,3 +28,4 @@ pub mod storage;
 pub mod tracker;
 pub mod unstable;
 pub(crate) mod util;
+pub(crate) mod raft_test;
