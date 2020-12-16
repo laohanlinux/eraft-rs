@@ -5,12 +5,12 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod tests {
     use crate::quorum::majority::MajorityConfig;
-    use crate::quorum::quorum::{AckedIndexer, Index};
-    use std::collections::{HashMap, HashSet};
-    use rand::Rng;
-    use rand::prelude::*;
-    use std::cmp::Ordering;
     use crate::quorum::quick_test::alternative_majority_committed_index;
+    use crate::quorum::quorum::{AckedIndexer, Index};
+    use rand::prelude::*;
+    use rand::Rng;
+    use std::cmp::Ordering;
+    use std::collections::{HashMap, HashSet};
 
     type IdxMap = HashMap<u64, Index>;
 
@@ -35,7 +35,6 @@ mod tests {
         });
         m
     }
-
 
     // returns a reasonably sized map of ids to commit indexes.
     fn small_ran_idx_map(size: usize) -> HashMap<u64, Index> {
@@ -74,7 +73,10 @@ mod tests {
 }
 
 // This is an alternative implmentation of (MajorityConfig).CommittedIndex(l).
-pub(crate) fn alternative_majority_committed_index<T: AckedIndexer>(c: MajorityConfig, l: &T) -> Index {
+pub(crate) fn alternative_majority_committed_index<T: AckedIndexer>(
+    c: MajorityConfig,
+    l: &T,
+) -> Index {
     if c.is_empty() {
         return u64::MAX;
     }
@@ -111,5 +113,3 @@ pub(crate) fn alternative_majority_committed_index<T: AckedIndexer>(c: MajorityC
     // println!("---->{:?}, {:?}, quorum: {}, max_quorum_index: {:?}", id_to_idx, idx_to_votes, q, max_quorum_index);
     max_quorum_index
 }
-
-

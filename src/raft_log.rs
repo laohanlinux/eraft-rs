@@ -122,6 +122,7 @@ impl<T: Storage> RaftLog<T> {
         }
     }
 
+    // append unstable entries
     pub(crate) fn append(&mut self, ents: &[Entry]) -> u64 {
         if ents.is_empty() {
             return self.last_index();
@@ -175,6 +176,7 @@ impl<T: Storage> RaftLog<T> {
     /// next_ents returns all the available entries for execution.
     /// If applied is smaller than the index of snapshot, it returns all committed
     /// entries after the index of snapshot.
+    /// ME: snapshot <= applied <= commit or applied <= snapshot <= commit
     pub fn next_ents(&self) -> Vec<Entry> {
         let off = self.first_index().max(self.applied + 1);
         if self.committed + 1 > off {
@@ -207,6 +209,7 @@ impl<T: Storage> RaftLog<T> {
             .map_err(|err| RaftLogError::FromStorage(err))
     }
 
+    /// Returns the first index of unstable or storage
     pub fn first_index(&self) -> u64 {
         if let Some(i) = self.unstable.maybe_first_index() {
             return i;
@@ -214,7 +217,7 @@ impl<T: Storage> RaftLog<T> {
         self.storage.first_index().unwrap()
     }
 
-    // LastIndex returns the last index of the log entries
+    /// Returns the last index of the log entries
     pub fn last_index(&self) -> u64 {
         if let Some(index) = self.unstable.maybe_last_index() {
             index
@@ -320,8 +323,13 @@ impl<T: Storage> RaftLog<T> {
     pub(crate) fn maybe_commit(&mut self, max_index: u64, term: u64) -> bool {
         if max_index > self.committed && self.term(max_index).map_or(false, |t| t == term) {
             self.commit_to(max_index);
+            debug!("commit log, max_index: {}", max_index);
             return true;
         }
+        debug!(
+            "can not commit log, max_index: {}, term: {}",
+            max_index, term
+        );
         false
     }
 

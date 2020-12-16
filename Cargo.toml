@@ -27,5 +27,6 @@ async-channel = "1.4.0"
 async-io = "0.1.9"
 [dev-dependencies]
 flexi_logger = { version = "0.15", features = ["specfile", "ziplogs"] }
+maplit = "1.0.2"
 [build-dependencies]
 protoc-rust = "2.0"

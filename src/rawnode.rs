@@ -306,8 +306,8 @@ impl<S: Storage> RawCoreNode<S> {
     /// WithProgress is a helper to introspect the Progress for this node and its
     /// peers.
     pub fn with_progress<F>(&mut self, mut visitor: F)
-        where
-            F: FnMut(u64, ProgressType, &mut Progress),
+    where
+        F: FnMut(u64, ProgressType, &mut Progress),
     {
         // self.raft.prs.visit()
         self.raft.prs.visit(|id, pr| {
@@ -493,7 +493,7 @@ mod tests {
             hard_state.set_term(1);
             hard_state.set_commit(1);
             {
-                s.wl().set_hard_state(hard_state);
+                s.wl().set_hard_state(hard_state).unwrap();
             }
             {
                 let mut snap_meta = SnapshotMetadata::new();

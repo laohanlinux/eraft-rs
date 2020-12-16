@@ -1,9 +1,9 @@
-use std::collections::{HashSet, HashMap};
-use std::fmt::{self, Formatter, Display, Write};
-use std::process::id;
-use std::cmp::Ordering;
 use crate::quorum::quorum::{AckedIndexer, Index, VoteResult};
+use std::cmp::Ordering;
 use std::collections::hash_set::Iter;
+use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display, Formatter, Write};
+use std::process::id;
 
 /// MajorityConfig is a set of IDs that uses majority quorums to make decisions.
 #[derive(Clone, PartialEq, Debug)]
@@ -19,7 +19,9 @@ impl From<HashSet<u64>> for MajorityConfig {
 
 impl MajorityConfig {
     pub fn new() -> Self {
-        MajorityConfig { votes: HashSet::new() }
+        MajorityConfig {
+            votes: HashSet::new(),
+        }
     }
 
     /// returns a (multi-line) representation of the commit indexes for the
@@ -72,7 +74,8 @@ impl MajorityConfig {
         let mut buf = String::new();
         // print
 
-        buf.write_str((" ".repeat(n) + "    idx\n").as_str()).unwrap();
+        buf.write_str((" ".repeat(n) + "    idx\n").as_str())
+            .unwrap();
 
         for i in 0..info.len() {
             let bar = info[i].bar;
@@ -80,9 +83,11 @@ impl MajorityConfig {
                 buf.write_str("?").unwrap();
                 buf.write_str(" ".repeat(n).as_str()).unwrap();
             } else {
-                buf.write_str(&*("x".repeat(bar) + ">" + " ".repeat(n - bar).as_str())).unwrap();
+                buf.write_str(&*("x".repeat(bar) + ">" + " ".repeat(n - bar).as_str()))
+                    .unwrap();
             }
-            buf.write_str(format!(" {:>5}    (id={})\n", info[i].idx, info[i].id).as_str()).unwrap();
+            buf.write_str(format!(" {:>5}    (id={})\n", info[i].idx, info[i].id).as_str())
+                .unwrap();
         }
         buf
     }
@@ -128,14 +133,21 @@ impl MajorityConfig {
             // quorum behave like a majority quorum
             return VoteResult::VoteWon;
         }
-        let (against, agree, missing) = self.votes.iter().fold((0, 0, 0), |(mut against, mut agree, mut missing), id| {
-            if let Some(v) = votes.get(id) {
-                if *v { agree += 1 } else { against += 1 }
-            } else {
-                missing += 1;
-            }
-            (against, agree, missing)
-        });
+        let (against, agree, missing) =
+            self.votes
+                .iter()
+                .fold((0, 0, 0), |(mut against, mut agree, mut missing), id| {
+                    if let Some(v) = votes.get(id) {
+                        if *v {
+                            agree += 1
+                        } else {
+                            against += 1
+                        }
+                    } else {
+                        missing += 1;
+                    }
+                    (against, agree, missing)
+                });
         // vote counts for no and yes, responsibility
         let q = self.len() / 2 + 1;
         debug!("agree:{}, missing:{}, q:{}", agree, missing, q);
@@ -238,11 +250,11 @@ impl Display for MajorityConfig {
 #[cfg(test)]
 mod tests {
     use crate::quorum::majority::MajorityConfig;
+    use crate::quorum::quorum::AckedIndexer;
+    use crate::quorum::quorum::VoteResult::{VoteLost, VotePending, VoteWon};
+    use crate::tracker::progress::Progress;
     use crate::tracker::MatchAckIndexer;
     use std::collections::HashMap;
-    use crate::quorum::quorum::VoteResult::{VoteLost, VotePending, VoteWon};
-    use crate::quorum::quorum::AckedIndexer;
-    use crate::tracker::progress::Progress;
 
     #[test]
     fn t_majority() {

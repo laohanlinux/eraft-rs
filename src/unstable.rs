@@ -340,7 +340,7 @@ mod tests {
             ), // stable to old entry
         ];
         for (i, (entries, offset, snapshot, index, term, w_offset, w_len)) in
-        tests.iter().enumerate()
+            tests.iter().enumerate()
         {
             let mut u = Unstable {
                 snapshot: snapshot.clone(),

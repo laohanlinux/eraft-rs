@@ -39,7 +39,6 @@ impl AckedIndexer for MapAckIndexer {
     }
 }
 
-
 /// VoteResult indicates the outcome of a vote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VoteResult {

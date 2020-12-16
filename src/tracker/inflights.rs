@@ -20,7 +20,15 @@ pub struct Inflights {
 
 impl Display for Inflights {
     fn fmt(&self, f: &mut Formatter<'_>) -> ::std::fmt::Result {
-        write!(f, "start:{}, count:{}, size:{}, is_full: {}, buffer:{:?}", self.start, self.count, self.size, self.full(), self.buffer)
+        write!(
+            f,
+            "start:{}, count:{}, size:{}, is_full: {}, buffer:{:?}",
+            self.start,
+            self.count,
+            self.size,
+            self.full(),
+            self.buffer
+        )
     }
 }
 

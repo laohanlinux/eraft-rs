@@ -1,4 +1,4 @@
-use std::fmt::{self, Display, Formatter, Error};
+use std::fmt::{self, Display, Error, Formatter};
 
 // StateType is the state of a tracked follower.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,12 +28,13 @@ impl Display for StateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StateType::Probe => write!(f, "StateProbe"),
-            StateType::Replicate => { write!(f, "StateReplicate") }
+            StateType::Replicate => {
+                write!(f, "StateReplicate")
+            }
             StateType::Snapshot => write!(f, "StateSnapshot"),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

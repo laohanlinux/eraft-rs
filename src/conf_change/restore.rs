@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::raftpb::raft::{ConfState, ConfChangeSingle, ConfChange, ConfChangeType};
-use crate::raftpb::raft::ConfChangeType::{ConfChangeAddNode, ConfChangeRemoveNode, ConfChangeAddLearnerNode};
-use crate::conf_change::new_conf_change_single;
-use crate::tracker::Config;
-use crate::tracker::progress::ProgressMap;
 use crate::conf_change::conf_change::Changer;
+use crate::conf_change::new_conf_change_single;
+use crate::raftpb::raft::ConfChangeType::{
+    ConfChangeAddLearnerNode, ConfChangeAddNode, ConfChangeRemoveNode,
+};
+use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeType, ConfState};
+use crate::tracker::progress::ProgressMap;
+use crate::tracker::Config;
 use std::array::FixedSizeArray;
 
 // toConfChangeSingle translates a conf state into 1) a slice of operations creating
-// first the config that will become the outgoing one, and then the incoming one, and 
-// b) another slice that, when applied to the config resulted from 1), respresents the 
+// first the config that will become the outgoing one, and then the incoming one, and
+// b) another slice that, when applied to the config resulted from 1), respresents the
 // ConfState.
 fn to_conf_change_single(cs: &ConfState) -> (Vec<ConfChangeSingle>, Vec<ConfChangeSingle>) {
     // Example to follow along this code:
@@ -56,26 +58,41 @@ fn to_conf_change_single(cs: &ConfState) -> (Vec<ConfChangeSingle>, Vec<ConfChan
     for id in cs.get_voters_outgoing() {
         // If there are outgoing voters, first add them one by one so that the
         // (non-joint) config has them all.
-        outgoing.push(new_conf_change_single(*id, ConfChangeType::ConfChangeAddNode));
+        outgoing.push(new_conf_change_single(
+            *id,
+            ConfChangeType::ConfChangeAddNode,
+        ));
     }
     // We're done constructing the outgoing slice, now on to the incoming one
     // (which will apply on top of the config created by the outgoing slice).
 
     // First, we'll remove all of the outgoing voters.
     for id in cs.get_voters_outgoing() {
-        incoming.push(new_conf_change_single(*id, ConfChangeType::ConfChangeRemoveNode));
+        incoming.push(new_conf_change_single(
+            *id,
+            ConfChangeType::ConfChangeRemoveNode,
+        ));
     }
     // Then we'll add the incoming voters and learners.
     for id in cs.get_voters() {
-        incoming.push(new_conf_change_single(*id, ConfChangeType::ConfChangeAddNode));
+        incoming.push(new_conf_change_single(
+            *id,
+            ConfChangeType::ConfChangeAddNode,
+        ));
     }
     for id in cs.get_learners() {
-        incoming.push(new_conf_change_single(*id, ConfChangeType::ConfChangeAddLearnerNode));
+        incoming.push(new_conf_change_single(
+            *id,
+            ConfChangeType::ConfChangeAddLearnerNode,
+        ));
     }
     // Same for LeanersNext; these are nodes we want to be learners but which
     // are currently voters in the outgoing config.
     for id in cs.get_learners_next() {
-        incoming.push(new_conf_change_single(*id, ConfChangeType::ConfChangeAddLearnerNode))
+        incoming.push(new_conf_change_single(
+            *id,
+            ConfChangeType::ConfChangeAddLearnerNode,
+        ))
     }
     (outgoing, incoming)
 }
@@ -127,23 +144,25 @@ pub fn restore(chg: &mut Changer, cs: &ConfState) -> Result<(Config, ProgressMap
     Ok((chg.tracker.config.clone(), chg.tracker.progress.clone()))
 }
 
-
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
-    use rand::prelude::SliceRandom;
-    use crate::raftpb::raft::ConfState;
     use crate::conf_change::conf_change::Changer;
-    use crate::tracker::ProgressTracker;
     use crate::conf_change::restore::restore;
+    use crate::raftpb::raft::ConfState;
+    use crate::tracker::ProgressTracker;
     use protobuf::reflect::ProtobufValue;
+    use rand::prelude::SliceRandom;
+    use rand::Rng;
 
     #[test]
     fn t_restore() {
         flexi_logger::Logger::with_env().start();
         let count = 1000;
         let f = |cs: &mut ConfState| -> bool {
-            let mut chg = Changer { tracker: ProgressTracker::new(10), last_index: 0 };
+            let mut chg = Changer {
+                tracker: ProgressTracker::new(10),
+                last_index: 0,
+            };
             let (cfg, prs) = {
                 match restore(&mut chg, cs) {
                     Ok((cfg, prs)) => (cfg, prs),
@@ -180,8 +199,12 @@ mod tests {
             false
         };
 
-
-        let new_conf_state = |voters: Option<Vec<u64>>, learners: Option<Vec<u64>>, voters_outgoing: Option<Vec<u64>>, learners_next: Option<Vec<u64>>, auto_leave: bool| -> ConfState{
+        let new_conf_state = |voters: Option<Vec<u64>>,
+                              learners: Option<Vec<u64>>,
+                              voters_outgoing: Option<Vec<u64>>,
+                              learners_next: Option<Vec<u64>>,
+                              auto_leave: bool|
+         -> ConfState {
             let mut cs = ConfState::new();
             if voters.is_some() {
                 cs.set_voters(voters.unwrap());
@@ -202,8 +225,16 @@ mod tests {
             ConfState::new(),
             new_conf_state(Some(vec![1, 2, 3]), None, None, None, false),
             new_conf_state(Some(vec![1, 2, 3]), Some(vec![4, 5, 6]), None, None, false),
-            new_conf_state(Some(vec![1, 2, 3]), Some(vec![5]), Some(vec![1, 2, 4, 6]), Some(vec![4]), false)
-        ].iter_mut() {
+            new_conf_state(
+                Some(vec![1, 2, 3]),
+                Some(vec![5]),
+                Some(vec![1, 2, 4, 6]),
+                Some(vec![4]),
+                false,
+            ),
+        ]
+        .iter_mut()
+        {
             assert!(f(&mut cs));
         }
 
@@ -238,7 +269,8 @@ mod tests {
 
         // Voters, learners, and removed voters must not overlap. A "removed voter"
         // is one that we have in the outgoing config but not the incoming one.
-        let mut ids = (1..=2 * (n_voters + n_learners + n_removed_voters) as u64).collect::<Vec<_>>();
+        let mut ids =
+            (1..=2 * (n_voters + n_learners + n_removed_voters) as u64).collect::<Vec<_>>();
         ids.shuffle(&mut r);
         // println!("ids {:?}, {}", ids, 2 * (n_voters + n_learners + n_removed_voters));
         let mut cs = ConfState::new();
@@ -254,8 +286,10 @@ mod tests {
         // NB: this code avoids creating non-nil empty slices (here and below).
         let n_outgoing_retained_voters = r.gen_range(0, n_voters + 1);
         if n_outgoing_retained_voters > 0 || n_removed_voters > 0 {
-            cs.voters_outgoing.extend_from_slice(&cs.voters[..n_outgoing_retained_voters]);
-            cs.voters_outgoing.extend_from_slice(&ids[..n_removed_voters]);
+            cs.voters_outgoing
+                .extend_from_slice(&cs.voters[..n_outgoing_retained_voters]);
+            cs.voters_outgoing
+                .extend_from_slice(&ids[..n_removed_voters]);
         }
 
         // Only outgoing voters that are not also incoming voters can be in

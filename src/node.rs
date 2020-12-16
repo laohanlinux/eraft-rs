@@ -123,7 +123,7 @@ impl Ready {
         prev_soft_st: T,
         prev_hard_st: HardState,
     ) -> Ready {
-        let prev_soft_st =  prev_soft_st.into();
+        let prev_soft_st = prev_soft_st.into();
         let mut ready = Ready {
             soft_state: prev_soft_st.clone(),
             hard_state: prev_hard_st.clone(),

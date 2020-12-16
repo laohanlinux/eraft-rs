@@ -188,7 +188,11 @@ mod tests {
             };
             assert!(wl_raft.step(msg).is_ok());
             let ms = read_message(&mut wl_raft.raft);
-            assert!(wl_raft.raft.prs.progress.must_get(&0x2).inflights.full(), "inflights.full = {}", false);
+            assert!(
+                wl_raft.raft.prs.progress.must_get(&0x2).inflights.full(),
+                "inflights.full = {}",
+                false
+            );
 
             // and just one slot and inflights is full.
             for i in 0..10 {
