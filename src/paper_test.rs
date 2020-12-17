@@ -754,6 +754,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn follower_append_entries() {
+        flexi_logger::Logger::with_env().format(flexi_logger::colored_default_format).start();
         let tests = vec![
             (2, 2,
              new_entry_set(vec![(3, 3)]),
@@ -777,6 +778,7 @@ mod tests {
             storage.wl().append(new_entry_set(vec![(1, 1), (2, 2)])).unwrap();
             let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, storage);
             raft.become_follower(2, 0x2);
+            info!("-------> hard_state: {:?}", raft.hard_state());
             raft.step(Message { from: 0x2, to: 0x1, field_type: MsgApp, term: 2, logTerm: *term, index: *index, entries: RepeatedField::from_vec(ents.clone()), ..Default::default() });
 
             let g = raft.raft_log.all_entries();

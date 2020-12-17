@@ -7,6 +7,7 @@ use bytes::Bytes;
 use env_logger::Logger;
 use protobuf::RepeatedField;
 use std::collections::HashMap;
+use std::env::set_var;
 
 pub fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
     let msg = raft.msgs.clone();
