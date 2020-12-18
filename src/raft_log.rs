@@ -258,10 +258,12 @@ impl<T: Storage> RaftLog<T> {
         self.applied = i;
     }
 
+    // Move log from `unstable` to `stable` when advanced
     pub(crate) fn stable_to(&mut self, i: u64, t: u64) {
         self.unstable.stable_to(i, t);
     }
 
+    // Move snapshot from `unstable` to `stable`
     pub(crate) fn stable_snap_to(&mut self, i: u64) {
         self.unstable.stable_snap_to(i)
     }

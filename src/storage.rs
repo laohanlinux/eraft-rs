@@ -81,6 +81,7 @@ pub struct MemoryStorage {
 }
 
 impl MemoryStorage {
+    /// Create a new memory storage.
     pub fn new() -> Self {
         MemoryStorage {
             hard_state: Default::default(),
@@ -90,6 +91,7 @@ impl MemoryStorage {
         }
     }
 
+    /// Create memory storage with multiple entries.
     pub fn new_with_entries(entries: Vec<Entry>) -> Self {
         MemoryStorage {
             hard_state: Default::default(),
@@ -98,14 +100,13 @@ impl MemoryStorage {
         }
     }
 
-    // set_hard_state saves the current hard state.
+    /// Saves the current hard state.
     pub fn set_hard_state(&mut self, st: HardState) -> Result<(), StorageError> {
         self.hard_state = st;
         Ok(())
     }
 
-    // ApplySnapshot overwrites the contents of this Storage object with
-    // those of the given snapshot.
+    /// Overwrites the contents of this Storage object with those of the given snapshot.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) -> Result<(), StorageError> {
         // handle check for old snapshot being applied
         let index = self.snapshot.get_metadata().get_index();
@@ -121,18 +122,18 @@ impl MemoryStorage {
         Ok(())
     }
 
-    // create_snapshot makes a snapshot which can be retrieved with Snapshot() and
-    // can be used to reconstruct the state at that point.
-    // If any configuration changes have been made since the last compaction,
-    // the result of the last ApplyConfigChange must be passed in.
+    /// Makes a snapshot which can be retrieved with Snapshot() and
+    /// can be used to reconstruct the state at that point.
+    /// If any configuration changes have been made since the last compaction,
+    /// the result of the last ApplyConfigChange must be passed in.
     pub fn create_snapshot<T>(
         &mut self,
         i: u64,
         cs: T,
         data: Bytes,
     ) -> Result<Snapshot, StorageError>
-    where
-        T: Into<Option<ConfState>>,
+        where
+            T: Into<Option<ConfState>>,
     {
         if i <= self.snapshot.get_metadata().get_index() {
             return Err(StorageError::SnapshotOfDate);

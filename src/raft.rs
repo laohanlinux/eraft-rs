@@ -747,6 +747,7 @@ impl<S: Storage> Raft<S> {
             }
         }
 
+        // change stable log
         if !rd.entries.is_empty() {
             let e = rd.entries.last().unwrap();
             self.raft_log.stable_to(e.get_Index(), e.get_Term());
