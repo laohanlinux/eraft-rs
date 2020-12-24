@@ -163,7 +163,7 @@ impl Ready {
     // extracts from the `Ready` the highest index the client has
     // applied (once the Ready is confirmed via advance). If no information is
     // contained in the Ready, returns zero.
-    pub(crate) fn appliedCursor(&self) -> u64 {
+    pub(crate) fn applied_cursor(&self) -> u64 {
         self.committed_entries
             .last()
             .map(|entry| entry.get_Index())

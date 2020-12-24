@@ -28,14 +28,14 @@ pub enum RaftLogError {
     FromStorage(StorageError),
 }
 
-// RaftLog manage the log entries, its struct look like:
-//
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
-//
-// for simplify the RaftLog implement should manage all log entries
-// that not truncated
+/// *RaftLog* manage the log entries, its struct look like:
+///
+///  snapshot/first.....applied....committed....stabled.....last
+///  --------|------------------------------------------------|
+///                            log entries
+///
+/// for simplify the RaftLog implement should manage all log entries
+/// that not truncated
 pub struct RaftLog<T: Storage> {
     // storage contains all stable entries since the last snapshot
     pub(crate) storage: T,
@@ -53,19 +53,14 @@ pub struct RaftLog<T: Storage> {
     // Invariant: applied <= committed
     pub(crate) applied: u64,
 
-    // log entries with index <= stabled are persisted to storage.
-    // It is used to record the logs that are not persisted by storage yet.
-    // Everytime handling `Ready`, the unstable logs will be included.
-    stabled: u64,
-
     // max_next_ents_size is the maximum number aggregate byte size of the messages
     // returned from calls to nextEnts
     max_next_ents_size: u64,
 }
 
 impl<T: Storage> RaftLog<T> {
-    // newLog returns log using the given storage. It recovers the log
-    // to the state that it just commits and applies the latest snapshot.
+    /// Returns log using the given storage. It recovers the log
+    /// to the state that it just commits and applies the latest snapshot.
     pub fn new(storage: T) -> Self {
         Self::new_log_with_size(storage, NO_LIMIT)
     }
@@ -76,7 +71,6 @@ impl<T: Storage> RaftLog<T> {
             unstable: Default::default(),
             committed: 0,
             applied: 0,
-            stabled: 0,
             max_next_ents_size,
         };
         let first_index = log.storage.first_index().unwrap();

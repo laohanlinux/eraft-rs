@@ -718,7 +718,7 @@ impl<S: Storage> Raft<S> {
         // the next `Ready`, Note that if the current `HardState` contains a
         // new `Commit` index, this does not mean that we're also applying
         // all of the new entries due to commit pagination by size.
-        let new_applied = rd.appliedCursor();
+        let new_applied = rd.applied_cursor();
         if new_applied > 0 {
             let old_applied = self.raft_log.applied;
             self.raft_log.applied_to(new_applied);
