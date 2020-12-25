@@ -156,26 +156,26 @@ pub enum RaftError {
 /// Config contains the parameters to start a raft.
 #[derive(Clone)]
 pub struct Config {
-    // id is the identify of the local raft. id cannot be 0;
+    /// id is the identify of the local raft. id cannot be 0;
     pub id: u64,
 
-    // peers contains the IDs of all nodes (including self) in the raft cluster. It
-    // should only be set when starting a new raft cluster. Restarting raft from
-    // previous configuration will panic if peers is set. peer is private and only
-    // used for testing right now.
+    /// `peers` contains the IDs of all nodes (*including self*) in the raft cluster. It
+    /// should only be set when starting a new raft cluster. Restarting raft from
+    /// previous configuration will panic if peers is set. peer is private and only
+    /// used for testing right now.
     pub peers: Vec<u64>,
 
-    // learners contains the IDs of all learner nodes (including self if the
-    // local node is a learner) in the raft cluster. learners only receives
-    // entries from the leader node. It does not vote or promote itself.
+    /// learners contains the IDs of all learner nodes (including self if the
+    /// local node is a learner) in the raft cluster. learners only receives
+    /// entries from the leader node. It does not vote or promote itself.
     pub learners: Vec<u64>,
 
-    // ElectionTick is the number of Node.Tick invocations that must pass between
-    // elections. That is, if a follower does not receive any message from the
-    // leader of current term before ElectionTick has elapsed, it will become
-    // candidate and start an election. ElectionTick must be greater than
-    // HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
-    // unnecessary leader switching.
+    /// ElectionTick is the number of Node.Tick invocations that must pass between
+    /// elections. That is, if a follower does not receive any message from the
+    /// leader of current term before ElectionTick has elapsed, it will become
+    /// candidate and start an election. ElectionTick must be greater than
+    /// HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
+    /// unnecessary leader switching.
     pub election_tick: u64,
 
     // HeartbeatTick is the number of Node.Tick invocations that must pass between

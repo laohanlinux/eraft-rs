@@ -38,32 +38,31 @@ pub enum StorageError {
     SnapshotTemporarilyUnavailable,
 }
 
+/// TODO(tbg): split this into two interfaces, `log_storage` and `state_storage`. 
 pub trait Storage {
-    // TODO(tbg): split this into two interfaces, LogStorage and StateStorage
-
-    // InitialState returns the saved HardState and ConfState information.
+    /// Returns the saved `HardState` and `ConfState` information.
     fn initial_state(&self) -> Result<(HardState, ConfState), StorageError>;
-    // Entries returns a slice of log entries in the range [lo, hi).
-    // MaxSize limits the total size of the log entries returned, but
-    // Entries returns at least one entry if any.
-    // NOTE: entries zero is not use
+    /// Returns a slice of log entries in the range [lo, hi).
+    /// `MaxSize` limits the total size of the log entries returned, but
+    /// `Entries` returns at least one entry if any.
+    /// NOTE: entries zero is not use
     fn entries(&self, lo: u64, hi: u64, limit: u64) -> Result<Vec<Entry>, StorageError>;
-    // Term returns the term of entry i, which must be in the range
-    // [FirstIndex()-1, LastIndex()]. The term of the entry before
-    // FirstIndex is retained for matching purposes even though the
-    // rest of that entry may not be available
+    /// Returns the term of entry i, which must be in the range
+    /// `[FirstIndex()-1, LastIndex()]`. The term of the entry before
+    /// `FirstIndex` is retained for matching purposes even though the
+    /// rest of that entry may not be available
     fn term(&self, i: u64) -> Result<u64, StorageError>;
-    // LastIndex returns the index of the last entry in the log.
+    /// Returns the index of the last entry in the log.
     fn last_index(&self) -> Result<u64, StorageError>;
-    // FirstIndex returns the index of the first log entry in that is
-    // possibly available via Entries (older entries have been incorporated
-    // into the latest Snapshot; if storage only contains the dummy entry the
-    // first log entry is not available).
+    /// Returns the index of the first log entry in that is
+    /// possibly available via Entries (older entries have been incorporated
+    /// into the latest Snapshot; if storage only contains the dummy entry the
+    /// first log entry is not available).
     fn first_index(&self) -> Result<u64, StorageError>;
-    // Snapshot returns the most recent snapshot.
-    // If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
-    // so raft state machine could know that Storage needs some time to prepare
-    // snapshot and call Snapshot later.
+    /// Returns the most recent snapshot.
+    /// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
+    /// so raft state machine could know that Storage needs some time to prepare
+    /// snapshot and call Snapshot later.
     fn snapshot(&self) -> Result<Snapshot, StorageError>;
 }
 
