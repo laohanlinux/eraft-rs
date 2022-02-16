@@ -25,7 +25,7 @@ mod tests {
     // changes arrive at the same result.
     #[test]
     fn t_conf_change_quick() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let count = 1000;
         // log the first couple of runs of give some indication of things working
         // as intended.
@@ -69,16 +69,16 @@ mod tests {
         let mut ccs = gen_cc(
             || -> usize {
                 let mut r = rand::thread_rng();
-                r.gen_range(1, 9) + 1
+                r.gen_range(1..9) + 1
             },
             || -> u64 {
                 let mut r = rand::thread_rng();
-                r.gen_range(1, 9) + 1
+                r.gen_range(1..9) + 1
             },
             || -> ConfChangeType {
                 let mut r = rand::thread_rng();
                 let n = ConfChangeType::values().len();
-                let em = r.gen_range(0, n);
+                let em = r.gen_range(0..n);
                 ConfChangeType::from_i32(em as i32).unwrap()
             },
         );

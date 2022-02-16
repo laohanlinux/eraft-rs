@@ -11,7 +11,7 @@ mod test {
 
     #[test]
     fn t_conf_data_driven() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         walk("src/conf_change/testdata", |p| {
             let mut tr = ProgressTracker::new(10);
             let mut c = Changer {

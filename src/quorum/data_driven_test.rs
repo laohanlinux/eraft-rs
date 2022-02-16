@@ -36,7 +36,7 @@ mod tests {
     // influence the result; if it does, this is noted in the test's output.
     #[test]
     fn t_data_driven() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         walk("src/quorum/testdata", |p| {
             execute_test(p, "--------------------------------", |data| -> String {
                 // Two majority configs. The first one is always used (though it may

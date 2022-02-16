@@ -14,6 +14,7 @@
 
 #[cfg(test)]
 mod tests {
+    use env_logger::Env;
     use crate::mock::{
         new_test_core_node, new_test_inner_node, new_test_raw_node, read_message, MocksEnts,
     };
@@ -25,7 +26,7 @@ mod tests {
 
     #[test]
     fn sending_snapshot_set_pending_snapshot() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let mut raft = new_test_inner_node(0x1, vec![1], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -57,7 +58,7 @@ mod tests {
 
     #[test]
     fn pending_snapshot_pause_replication() {
-        flexi_logger::Logger::with_env().start();
+        flexi_logger::Logger::try_with_env().unwrap().start().unwrap();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -79,7 +80,7 @@ mod tests {
 
     #[test]
     fn snapshot_failure() {
-        flexi_logger::Logger::with_env().start();
+        flexi_logger::Logger::try_with_env().unwrap().start();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -116,7 +117,7 @@ mod tests {
 
     #[test]
     fn snapshot_succeed() {
-        flexi_logger::Logger::with_env().start();
+        env_logger::try_init_from_env(Env::new().filter("info"));
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -148,7 +149,7 @@ mod tests {
 
     #[test]
     fn snapshot_abort() {
-        flexi_logger::Logger::with_env().start();
+        env_logger::try_init_from_env(Env::new().filter("info"));
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
         raft.become_candidate();

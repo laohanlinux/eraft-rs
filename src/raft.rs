@@ -1634,7 +1634,7 @@ impl<S: Storage> Raft<S> {
 
     fn reset_randomized_election_timeout(&mut self) {
         self.randomized_election_timeout =
-            self.election_timeout + thread_rng().gen_range(0, self.election_timeout);
+            self.election_timeout + thread_rng().gen_range(1..=self.election_timeout);
     }
 
     fn send_timeout_now(&mut self, to: u64) {

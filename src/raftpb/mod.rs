@@ -61,7 +61,7 @@ impl ConfChangeI for ConfChange {
     #[inline]
     fn as_v2(&self) -> ConfChangeV2 {
         let mut cc2 = ConfChangeV2::new();
-        cc2.set_context(self.get_context().to_bytes());
+        cc2.context = self.context.clone();
         let mut change = ConfChangeSingle::new();
         change.set_field_type(self.get_field_type());
         change.set_node_id(self.get_node_id());
