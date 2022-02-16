@@ -28,19 +28,19 @@ mod tests {
 
     #[test]
     fn follower_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Follower);
     }
 
     #[test]
     fn candidate_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Candidate);
     }
 
     #[test]
     fn leader_update_term_from_message() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_update_term_from_message(StateType::Leader);
     }
 
@@ -84,7 +84,7 @@ mod tests {
     // Reference: section 5.1
     #[test]
     fn reject_stale_term_message() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let mut called = false;
         let mut fake_step = |raft: &Raft<SafeMemStorage>, m: Message| -> Result<(), String> {
             called = true;
@@ -109,7 +109,7 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn start_as_followers() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
         assert_eq!(
             raft.state,
@@ -126,7 +126,7 @@ mod tests {
     // Reference: 5.2
     #[test]
     fn leader_bcast_beat() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         // heartbeat interval
         let hi = 1;
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, hi, SafeMemStorage::new());
@@ -166,13 +166,13 @@ mod tests {
 
     #[test]
     fn follower_start_election() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_non_leader_start_election(StateType::Follower);
     }
 
     #[test]
     fn candidate_start_new_election() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_non_leader_start_election(StateType::Candidate);
     }
 
@@ -249,7 +249,7 @@ mod tests {
     // Reference: section 5.2
     #[test]
     fn leader_election_in_one_round_rpc() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let tests = vec![
             (1, hashmap! {}, StateType::Leader),
             (3, hashmap! {2 => true, 3 => true}, StateType::Leader),
@@ -317,7 +317,7 @@ mod tests {
     // Reference: section 5.2
     #[test]
     fn follower_vote() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let tests = vec![
             (NONE, 1, false),
             (NONE, 1, false),
@@ -414,13 +414,13 @@ mod tests {
 
     #[test]
     fn follower_election_timeout_randomized() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_non_leader_election_timeout_randomized(StateType::Follower);
     }
 
     #[test]
     fn candidate_election_timeout_randomized() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_non_leader_election_timeout_randomized(StateType::Candidate);
     }
 
@@ -457,13 +457,13 @@ mod tests {
 
     #[test]
     fn follower_election_timeout_non_conflict() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         test_non_leader_election_timeout_non_conflict(StateType::Follower);
     }
 
     #[test]
     fn candidate_election_timeout_non_conflict() {
-        flexi_logger::Logger::with_env().start();
+        env_logger::Logger::from_default_env();
         test_non_leader_election_timeout_non_conflict(StateType::Candidate);
     }
 
@@ -477,7 +477,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn leader_start_replication() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2, 0x3], 10, 1, SafeMemStorage::new());
         raft.become_candidate();
         raft.become_leader();
@@ -645,7 +645,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn leader_commit_preceding_entries() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let tests = vec![
             new_entry_set(vec![]),
             new_entry_set(vec![(1, 2)]),
@@ -690,7 +690,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn follower_commit_entry() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let tests = vec![
             (new_entry_set2(vec![(1, 1, "some data")]), 1),
             (new_entry_set2(vec![(1, 1, "some data"), (2, 1, "some data2")]), 2),
@@ -717,7 +717,7 @@ mod tests {
     // Reference: section 5.3 
     #[test]
     fn follower_check_msg_app() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let ents = new_entry_set(vec![(1, 1), (2, 2)]);
         let tests = vec![
             // match with committed entries
@@ -754,6 +754,7 @@ mod tests {
     // Reference: section 5.3
     #[test]
     fn follower_append_entries() {
+        // flexi_logger::Logger::with_env().format(flexi_logger::colored_default_format).start();
         let tests = vec![
             (2, 2,
              new_entry_set(vec![(3, 3)]),

@@ -1,8 +1,6 @@
 #![feature(is_sorted)]
-#![feature(const_fn)]
 #![feature(custom_test_frameworks)]
 #![feature(in_band_lifetimes)]
-#![feature(fixed_size_array)]
 
 #[macro_use]
 extern crate log;

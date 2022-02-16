@@ -7,26 +7,27 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "0.4"
-protobuf = { version = "2", features = ["with-bytes"] }
-bytes = "0.5"
-anyhow = "1.0.31"
-thiserror = "1.0"
-getset = "0.0.9"
-nom = "5"
-chrono = "0.4.12"
-env_logger = "0.7.1"
-rand = "0.7.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "0.2", features = ["full"] }
-futures = { version = "0.3.5", default-features = true }
+log = "0.4.14"
+protobuf = { version = "2.27.1", features = ["with-bytes"] }
+bytes = "1.1.0"
+anyhow = "1.0.53"
+thiserror = "1.0.30"
+getset = "0.1.2"
+nom = "7.1.0"
+chrono = "0.4.19"
+env_logger = "0.9.0"
+rand = "0.8.5"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+tokio = { version = "1.16.1", features = ["full"] }
+futures = { version = "0.3.21", default-features = true }
 lazy_static = "1.4.0"
-smol = { version = "0.3", features = ["tokio02"] }
-async-channel = "1.4.0"
-async-io = "0.1.9"
+async-channel = "1.6.1"
+async-io = "1.6.0"
+async-trait = "0.1.52"
+tokio-global = "0.4.0"
 [dev-dependencies]
-flexi_logger = { version = "0.15", features = ["specfile", "ziplogs"] }
 maplit = "1.0.2"
+env_logger = "0.9.0"
 [build-dependencies]
-protoc-rust = "2.0"
+protoc-rust = "2.27.1"

@@ -20,7 +20,6 @@ use crate::raftpb::raft::ConfChangeType::{
 use crate::raftpb::raft::{ConfChange, ConfChangeSingle, ConfChangeType, ConfState};
 use crate::tracker::progress::ProgressMap;
 use crate::tracker::Config;
-use std::array::FixedSizeArray;
 
 // toConfChangeSingle translates a conf state into 1) a slice of operations creating
 // first the config that will become the outgoing one, and then the incoming one, and
@@ -156,7 +155,7 @@ mod tests {
 
     #[test]
     fn t_restore() {
-        flexi_logger::Logger::with_env().start();
+        // flexi_logger::Logger::with_env().start();
         let count = 1000;
         let f = |cs: &mut ConfState| -> bool {
             let mut chg = Changer {
@@ -204,7 +203,7 @@ mod tests {
                               voters_outgoing: Option<Vec<u64>>,
                               learners_next: Option<Vec<u64>>,
                               auto_leave: bool|
-         -> ConfState {
+                              -> ConfState {
             let mut cs = ConfState::new();
             if voters.is_some() {
                 cs.set_voters(voters.unwrap());
@@ -233,7 +232,7 @@ mod tests {
                 false,
             ),
         ]
-        .iter_mut()
+            .iter_mut()
         {
             assert!(f(&mut cs));
         }
@@ -259,13 +258,13 @@ mod tests {
 
         let mut r = rand::thread_rng();
         // NB: never generate the empty ConfState, that one should be unit tested.
-        let n_voters = r.gen_range(0, 5) + 1;
-        let n_learners = r.gen_range(0, 5);
+        let n_voters = r.gen_range(0..5) + 1;
+        let n_learners = r.gen_range(0..5);
 
         // The number of voters that are in the outgoing config but not in the
         // incoming one. (We'll additionally retain a random number of the
         // incoming voters below).
-        let n_removed_voters = r.gen_range(0, 3);
+        let n_removed_voters = r.gen_range(0..3);
 
         // Voters, learners, and removed voters must not overlap. A "removed voter"
         // is one that we have in the outgoing config but not the incoming one.
@@ -284,7 +283,7 @@ mod tests {
         // previously voters.
         //
         // NB: this code avoids creating non-nil empty slices (here and below).
-        let n_outgoing_retained_voters = r.gen_range(0, n_voters + 1);
+        let n_outgoing_retained_voters = r.gen_range(0..=(n_voters + 1));
         if n_outgoing_retained_voters > 0 || n_removed_voters > 0 {
             cs.voters_outgoing
                 .extend_from_slice(&cs.voters[..n_outgoing_retained_voters]);
@@ -295,13 +294,13 @@ mod tests {
         // Only outgoing voters that are not also incoming voters can be in
         // learners_next (they represent demotions).
         if n_removed_voters > 0 {
-            let n_learners = r.gen_range(0, n_removed_voters + 1);
+            let n_learners = r.gen_range(0..n_removed_voters + 1);
             if n_learners > 0 {
                 cs.learners_next = ids[..n_learners].to_vec();
             }
         }
 
-        cs.set_auto_leave(cs.voters_outgoing.len() > 0 && r.gen_range(0, 2) == 1);
+        cs.set_auto_leave(cs.voters_outgoing.len() > 0 && r.gen_range(0..2) == 1);
         cs
     }
 }

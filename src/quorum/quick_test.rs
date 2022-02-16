@@ -42,13 +42,13 @@ mod tests {
         // is not usefull here).
         let size = 10;
         let mut rng = rand::thread_rng();
-        let n: usize = rng.gen_range(0, size);
+        let n: usize = rng.gen_range(0..size);
         let mut ids: Vec<usize> = (1..size).collect();
         ids.shuffle(&mut rng);
         ids.drain(n..);
         let mut idxs = [0].repeat(ids.len());
         for idx in idxs.iter_mut() {
-            *idx = rng.gen_range(0, n);
+            *idx = rng.gen_range(0..n);
         }
         let mut m = HashMap::new();
         for (i, v) in ids.iter().enumerate() {

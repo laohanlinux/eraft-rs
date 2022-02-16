@@ -28,14 +28,14 @@ pub enum RaftLogError {
     FromStorage(StorageError),
 }
 
-// RaftLog manage the log entries, its struct look like:
-//
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
-//
-// for simplify the RaftLog implement should manage all log entries
-// that not truncated
+/// *RaftLog* manage the log entries, its struct look like:
+///
+///  snapshot/first.....applied....committed....stabled.....last
+///  --------|------------------------------------------------|
+///                            log entries
+///
+/// for simplify the RaftLog implement should manage all log entries
+/// that not truncated
 pub struct RaftLog<T: Storage> {
     // storage contains all stable entries since the last snapshot
     pub(crate) storage: T,
@@ -53,19 +53,14 @@ pub struct RaftLog<T: Storage> {
     // Invariant: applied <= committed
     pub(crate) applied: u64,
 
-    // log entries with index <= stabled are persisted to storage.
-    // It is used to record the logs that are not persisted by storage yet.
-    // Everytime handling `Ready`, the unstable logs will be included.
-    stabled: u64,
-
     // max_next_ents_size is the maximum number aggregate byte size of the messages
     // returned from calls to nextEnts
     max_next_ents_size: u64,
 }
 
 impl<T: Storage> RaftLog<T> {
-    // newLog returns log using the given storage. It recovers the log
-    // to the state that it just commits and applies the latest snapshot.
+    /// Returns log using the given storage. It recovers the log
+    /// to the state that it just commits and applies the latest snapshot.
     pub fn new(storage: T) -> Self {
         Self::new_log_with_size(storage, NO_LIMIT)
     }
@@ -76,7 +71,6 @@ impl<T: Storage> RaftLog<T> {
             unstable: Default::default(),
             committed: 0,
             applied: 0,
-            stabled: 0,
             max_next_ents_size,
         };
         let first_index = log.storage.first_index().unwrap();
@@ -138,7 +132,7 @@ impl<T: Storage> RaftLog<T> {
         self.last_index()
     }
 
-    // find_conflict finds the index of the conflict.
+    // Finds the index of the conflict.
     // It returns the first pair of conflicting entries between the existing
     // entries and the given entries, if there are any.
     // If there is no conflicting entries, and the existing entries contains
@@ -151,10 +145,10 @@ impl<T: Storage> RaftLog<T> {
     // The index of the given entries MUST be continuously increasing.
     pub(crate) fn find_conflict(&self, ents: &[Entry]) -> u64 {
         for ent in ents {
-            if !self.match_term(ent.get_Index(), ent.get_Term()) {
-                // info!("not match at index {}", ent.get_Index());
-                if ent.get_Index() <= self.last_index() {
-                    let exist_term = self.term(ent.get_Index()).map_or(0, |t| t);
+            if !self.match_term(ent.Index, ent.Term) {
+                // info!("not match at index {}", ent.Index);
+                if ent.Index <= self.last_index() {
+                    let exist_term = self.term(ent.Index).map_or(0, |t| t);
                     info!(
                         "found conflict at index {} [existing term: {}, conflicting term: {}]",
                         ent.get_Index(),
@@ -162,21 +156,21 @@ impl<T: Storage> RaftLog<T> {
                         ent.get_Term()
                     );
                 }
-                return ent.get_Index();
+                return ent.Index;
             }
         }
         0
     }
 
-    /// unstable_entries returns all the unstable entries
+    /// Returns all the unstable entries.
     pub fn unstable_entries(&self) -> &[Entry] {
         return &self.unstable.entries;
     }
 
-    /// next_ents returns all the available entries for execution.
+    /// Returns all the available entries for execution.
     /// If applied is smaller than the index of snapshot, it returns all committed
     /// entries after the index of snapshot.
-    /// ME: snapshot <= applied <= commit or applied <= snapshot <= commit
+    /// ME: snapshot <= applied <= commit or applied <= snapshot <= commit.
     pub fn next_ents(&self) -> Vec<Entry> {
         let off = self.first_index().max(self.applied + 1);
         if self.committed + 1 > off {
@@ -188,7 +182,7 @@ impl<T: Storage> RaftLog<T> {
         }
     }
 
-    // has_next_entries returns if there is any available entries for execution. This
+    // Returns if there is any available entries for execution. This
     // is a fast check without heavy raftLog.slice() in raftLog.next_ents().
     pub(crate) fn has_next_entries(&self) -> bool {
         self.committed + 1 > self.first_index().max(self.applied + 1)
@@ -258,10 +252,12 @@ impl<T: Storage> RaftLog<T> {
         self.applied = i;
     }
 
+    // Move log from `unstable` to `stable` when advanced
     pub(crate) fn stable_to(&mut self, i: u64, t: u64) {
         self.unstable.stable_to(i, t);
     }
 
+    // Move snapshot from `unstable` to `stable`
     pub(crate) fn stable_snap_to(&mut self, i: u64) {
         self.unstable.stable_snap_to(i)
     }

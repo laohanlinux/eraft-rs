@@ -7,6 +7,7 @@ use bytes::Bytes;
 use env_logger::Logger;
 use protobuf::RepeatedField;
 use std::collections::HashMap;
+use std::env::set_var;
 
 pub fn read_message<S: Storage>(raft: &mut Raft<S>) -> Vec<Message> {
     let msg = raft.msgs.clone();
@@ -197,7 +198,7 @@ struct NetWork<M: StateMachine> {
     ignorem: HashMap<MessageType, bool>,
     // `msg_hook` is called for each message sent. It may inspect the
     // message and return true to send it for false to drop it
-    msg_hook: Box<Fn(Message) -> bool>,
+    msg_hook: Box<dyn Fn(Message) -> bool>,
 }
 
 impl<M: StateMachine> NetWork<M> {

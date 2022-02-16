@@ -1,4 +1,4 @@
-use bytes::buf::BufExt;
+use bytes::Buf;
 use bytes::Bytes;
 use std::fs::{read_dir, read_to_string};
 use std::io::BufRead;
@@ -21,7 +21,9 @@ where
 pub fn execute_test<P: AsRef<Path>, F>(path: P, split: &str, mut f: F)
 where
     F: FnMut(&TestData) -> String,
+
 {
+    use bytes::Buf;
     let mut data = vec![];
     let txt = read_to_string(path).unwrap();
     let lines = txt.split(split).collect::<Vec<_>>();

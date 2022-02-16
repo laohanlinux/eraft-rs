@@ -24,20 +24,19 @@ pub(crate) struct Unstable {
     pub(crate) snapshot: Option<Snapshot>,
     // all entries that have not been yet been written to storage.
     pub(crate) entries: Vec<Entry>,
+    // the first index of `entries` first entry
     pub(crate) offset: u64,
 }
 
 impl Unstable {
-    // maybe_first_index returns the index of the first possible entry in entries
-    // if it has a snapshot.
+    // Returns the index of the first possible entry in entries if it has a snapshot.
     pub(crate) fn maybe_first_index(&self) -> Option<u64> {
         self.snapshot
             .as_ref()
             .map(|snapshot| snapshot.get_metadata().get_index() + 1)
     }
 
-    // maybe_last_index returns last index if it has at least one
-    // unstable entry or snapshot
+    // Returns last index if it has at least one unstable entry or snapshot
     pub(crate) fn maybe_last_index(&self) -> Option<u64> {
         if !self.entries.is_empty() {
             return Some(self.offset + self.entries.len() as u64 - 1);
@@ -47,8 +46,7 @@ impl Unstable {
             .map(|snapshot| snapshot.get_metadata().get_index())
     }
 
-    // maybe_term returns the term of the entry at index i, if there
-    // is any.
+    // Returns the term of the entry at index i, if there is any.
     pub(crate) fn maybe_term(&self, i: u64) -> Option<u64> {
         if i < self.offset {
             if let Some(snapshot) = self.snapshot.as_ref() {
@@ -63,18 +61,14 @@ impl Unstable {
                 if i > index {
                     None
                 } else {
-                    Some(
-                        self.entries
-                            .get((i - self.offset) as usize)
-                            .unwrap()
-                            .get_Term(),
-                    )
+                    Some(self.entries[(i - self.offset) as usize].Term)
                 }
             }
             None => None,
         }
     }
 
+    // If self.entries had written to storage then clears these entries by stable_to
     pub(crate) fn stable_to(&mut self, i: u64, t: u64) {
         if let Some(gt) = self.maybe_term(i) {
             // if i < offset, term is matched with the snapshot
@@ -82,13 +76,15 @@ impl Unstable {
             // an unstable entry
             if gt == t && i >= self.offset {
                 let start = i + 1 - self.offset;
-                // TODO: add
+                // TODO: Optz entries memory 
                 self.entries.drain(..start as usize);
                 self.offset = i + 1;
             }
         }
     }
 
+   
+    // As same to stable_to, if self.snapshot had written to storage then reset snapshot
     pub(crate) fn stable_snap_to(&mut self, i: u64) {
         if let Some(ref snapshot) = self.snapshot {
             if snapshot.get_metadata().get_index() == i {
@@ -340,7 +336,7 @@ mod tests {
             ), // stable to old entry
         ];
         for (i, (entries, offset, snapshot, index, term, w_offset, w_len)) in
-            tests.iter().enumerate()
+        tests.iter().enumerate()
         {
             let mut u = Unstable {
                 snapshot: snapshot.clone(),

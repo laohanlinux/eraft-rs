@@ -306,8 +306,8 @@ impl<S: Storage> RawCoreNode<S> {
     /// WithProgress is a helper to introspect the Progress for this node and its
     /// peers.
     pub fn with_progress<F>(&mut self, mut visitor: F)
-    where
-        F: FnMut(u64, ProgressType, &mut Progress),
+        where
+            F: FnMut(u64, ProgressType, &mut Progress),
     {
         // self.raft.prs.visit()
         self.raft.prs.visit(|id, pr| {
@@ -415,75 +415,80 @@ mod tests {
         raw_node: SafeRawNode<SafeMemStorage>,
     }
 
+    use async_trait::async_trait;
+    use env_logger::Env;
+
+    #[async_trait]
     impl Node for RawNodeAdapter {
         // Tick advances the internal logical clock by a single tick.
-        fn tick(&mut self) {
+        async fn tick(&self) {
             self.raw_node.wl().tick();
         }
 
         // Campaign causes this RawNode to transition to candidate state.
-        fn campaign(&self) -> SafeResult<()> {
+        async fn campaign(&self) -> SafeResult<()> {
             self.raw_node.wl().campaign()
         }
 
         // Propose proposes data be appended to the raft log.
-        fn propose(&self, data: &[u8]) -> SafeResult<()> {
+        async fn propose(&self, data: &[u8]) -> SafeResult<()> {
             self.raw_node.wl().propose(Bytes::from(data.to_vec()))
         }
 
         // ProposeConfChange proposes a config change. See (Node).ProposeConfChange for
         // details.
-        fn propose_conf_change(&self, cc: impl ConfChangeI) -> SafeResult<()> {
+        async fn propose_conf_change(&self, cc: impl ConfChangeI) -> SafeResult<()> {
             self.raw_node.wl().propose_conf_change(cc)
         }
 
-        fn step(&self, msg: Message) -> SafeResult<()> {
+        async fn step(&self, msg: Message) -> SafeResult<()> {
             self.raw_node.wl().step(msg)
         }
 
-        fn ready(&self) -> Receiver<Ready> {
+        async fn ready(&self) -> Receiver<Ready> {
             unimplemented!()
         }
 
-        fn advance(&self) {
+        async fn advance(&self) {
             self.raw_node.wl().advance(&Ready::default());
         }
 
         // ApplyConfChange applies a config change to the local node. The app must call
         // this when it applies a configuration change, except when it decides to reject
         // the configuration change, in which case no call must take place.
-        fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState> {
+        async fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState> {
             Some(self.raw_node.wl().apply_conf_change(Box::new(cc)))
         }
 
-        fn transfer_leader_ship(&self, _: u64, transferee: u64) {
+        async fn transfer_leader_ship(&self, _: u64, transferee: u64) {
             self.raw_node.wl().transfer_leader(transferee)
         }
 
-        fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()> {
+        async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()> {
             self.raw_node.wl().read_index(rctx);
             // RawNode swallowed the error in ReadIndex, it probably should not do that.
             return Ok(());
         }
 
-        fn status(&self) -> Status {
+        async fn status(&self) -> Status {
             self.raw_node.rl().status()
         }
 
-        fn report_unreachable(&self, id: u64) {
+        async fn report_unreachable(&self, id: u64) {
             self.raw_node.wl().report_unreachable(id)
         }
 
-        fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
+        async fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
             self.raw_node.wl().report_snapshot(id, status)
         }
 
-        fn stop(&self) {}
+        async fn stop(&self) {}
     }
 
     #[test]
     fn t_raw_node_step() {
-        flexi_logger::Logger::with_env().start();
+        env_logger::try_init_from_env(Env::new().filter("info"));
+
         let msg_type = (0..MessageType::MsgPreVoteResp.value())
             .map(|id| MessageType::from_i32(id).unwrap())
             .collect::<Vec<_>>();
@@ -536,7 +541,7 @@ mod tests {
     // joint configurations makes sure that they are exited successfully.
     #[test]
     fn t_raw_node_propose_and_conf_change() {
-        flexi_logger::Logger::with_env().start();
+        env_logger::try_init_from_env(Env::new().filter("info"));
 
         // (cc, exp, exp2)
         let mut tests: Vec<(Box<dyn ConfChangeI>, ConfState, Option<ConfState>)> = vec![

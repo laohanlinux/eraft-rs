@@ -38,32 +38,31 @@ pub enum StorageError {
     SnapshotTemporarilyUnavailable,
 }
 
+/// TODO(tbg): split this into two interfaces, `log_storage` and `state_storage`. 
 pub trait Storage {
-    // TODO(tbg): split this into two interfaces, LogStorage and StateStorage
-
-    // InitialState returns the saved HardState and ConfState information.
+    /// Returns the saved `HardState` and `ConfState` information.
     fn initial_state(&self) -> Result<(HardState, ConfState), StorageError>;
-    // Entries returns a slice of log entries in the range [lo, hi).
-    // MaxSize limits the total size of the log entries returned, but
-    // Entries returns at least one entry if any.
-    // NOTE: entries zero is not use
+    /// Returns a slice of log entries in the range [lo, hi).
+    /// `MaxSize` limits the total size of the log entries returned, but
+    /// `Entries` returns at least one entry if any.
+    /// NOTE: entries zero is not use
     fn entries(&self, lo: u64, hi: u64, limit: u64) -> Result<Vec<Entry>, StorageError>;
-    // Term returns the term of entry i, which must be in the range
-    // [FirstIndex()-1, LastIndex()]. The term of the entry before
-    // FirstIndex is retained for matching purposes even though the
-    // rest of that entry may not be available
+    /// Returns the term of entry i, which must be in the range
+    /// `[FirstIndex()-1, LastIndex()]`. The term of the entry before
+    /// `FirstIndex` is retained for matching purposes even though the
+    /// rest of that entry may not be available
     fn term(&self, i: u64) -> Result<u64, StorageError>;
-    // LastIndex returns the index of the last entry in the log.
+    /// Returns the index of the last entry in the log.
     fn last_index(&self) -> Result<u64, StorageError>;
-    // FirstIndex returns the index of the first log entry in that is
-    // possibly available via Entries (older entries have been incorporated
-    // into the latest Snapshot; if storage only contains the dummy entry the
-    // first log entry is not available).
+    /// Returns the index of the first log entry in that is
+    /// possibly available via Entries (older entries have been incorporated
+    /// into the latest Snapshot; if storage only contains the dummy entry the
+    /// first log entry is not available).
     fn first_index(&self) -> Result<u64, StorageError>;
-    // Snapshot returns the most recent snapshot.
-    // If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
-    // so raft state machine could know that Storage needs some time to prepare
-    // snapshot and call Snapshot later.
+    /// Returns the most recent snapshot.
+    /// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
+    /// so raft state machine could know that Storage needs some time to prepare
+    /// snapshot and call Snapshot later.
     fn snapshot(&self) -> Result<Snapshot, StorageError>;
 }
 
@@ -81,6 +80,7 @@ pub struct MemoryStorage {
 }
 
 impl MemoryStorage {
+    /// Create a new memory storage.
     pub fn new() -> Self {
         MemoryStorage {
             hard_state: Default::default(),
@@ -90,6 +90,7 @@ impl MemoryStorage {
         }
     }
 
+    /// Create memory storage with multiple entries.
     pub fn new_with_entries(entries: Vec<Entry>) -> Self {
         MemoryStorage {
             hard_state: Default::default(),
@@ -98,14 +99,13 @@ impl MemoryStorage {
         }
     }
 
-    // set_hard_state saves the current hard state.
+    /// Saves the current hard state.
     pub fn set_hard_state(&mut self, st: HardState) -> Result<(), StorageError> {
         self.hard_state = st;
         Ok(())
     }
 
-    // ApplySnapshot overwrites the contents of this Storage object with
-    // those of the given snapshot.
+    /// Overwrites the contents of this Storage object with those of the given snapshot.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) -> Result<(), StorageError> {
         // handle check for old snapshot being applied
         let index = self.snapshot.get_metadata().get_index();
@@ -121,18 +121,18 @@ impl MemoryStorage {
         Ok(())
     }
 
-    // create_snapshot makes a snapshot which can be retrieved with Snapshot() and
-    // can be used to reconstruct the state at that point.
-    // If any configuration changes have been made since the last compaction,
-    // the result of the last ApplyConfigChange must be passed in.
+    /// Makes a snapshot which can be retrieved with Snapshot() and
+    /// can be used to reconstruct the state at that point.
+    /// If any configuration changes have been made since the last compaction,
+    /// the result of the last ApplyConfigChange must be passed in.
     pub fn create_snapshot<T>(
         &mut self,
         i: u64,
         cs: T,
         data: Bytes,
     ) -> Result<Snapshot, StorageError>
-    where
-        T: Into<Option<ConfState>>,
+        where
+            T: Into<Option<ConfState>>,
     {
         if i <= self.snapshot.get_metadata().get_index() {
             return Err(StorageError::SnapshotOfDate);
