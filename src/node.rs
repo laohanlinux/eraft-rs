@@ -760,171 +760,170 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
     // log entries[]
     ents_num != 0 || st.get_vote() != pre_st.get_vote() || st.get_term() != pre_st.get_term()
 }
-//
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::mock::new_test_raw_node;
-//     use crate::node::{InnerChan, InnerNode, Node};
-//     use crate::raft::{ReadOnlyOption, NO_LIMIT};
-//     use crate::raftpb::raft::MessageType::MsgProp;
-//     use crate::raftpb::raft::{Message, MessageType};
-//     use crate::storage::SafeMemStorage;
-//     use crate::util::is_local_message;
-//     use lazy_static::lazy_static;
-//     use nom::error::append_error;
-//     use protobuf::ProtobufEnum;
-//     use smol::Task;
-//     use std::sync::{Arc, Mutex};
-//     use tokio::time::Duration;
-//     lazy_static! {
-//     /// This is an example for using doc comment attributes
-//     static ref msgs: Arc < Mutex < Vec <Message > > > = Arc::new(Mutex::new(vec ! []));
-//     }
-//
-//     #[test]
-//     fn t_drop() {
-//         smol::block_on(async move {
-//             let mut ch: InnerChan<usize> = InnerChan::new();
-//             let rx = ch.rx.take();
-//             drop(rx);
-//             let tx = ch.tx();
-//             let res = tx.send(19).await;
-//             assert!(res.is_err());
-//         });
-//     }
-//
-//     // ensures that node.step sends msgProp to propc chan
-//     // and other kinds of messages to recvc chan.
-//     #[test]
-//     fn t_node_step() {
-//         flexi_logger::Logger::with_env().start();
-//         smol::block_on(async {
-//             for msgn in 0..MessageType::MsgPreVoteResp.value() {
-//                 let mut node: InnerNode<SafeMemStorage> =
-//                     InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
-//                 node.prop_c = InnerChan::new();
-//                 node.recv_c = InnerChan::new();
-//                 let msgt = MessageType::from_i32(msgn).unwrap();
-//                 let mut msg = Message::new();
-//                 msg.set_field_type(msgt);
-//                 node.step(msg);
-//                 // Proposal goes to proc chan. Others go to recvc chan.
-//                 if msgt == MsgProp {
-//                     let proposal_rx = node.prop_c.rx();
-//                     assert!(
-//                         proposal_rx.try_recv().is_ok(),
-//                         "{}: cannot receive {:?} on propc chan",
-//                         msgn,
-//                         msgt
-//                     );
-//                 } else {
-//                     let recv = node.recv_c.rx();
-//                     if is_local_message(msgt) {
-//                         assert!(
-//                             recv.try_recv().is_err(),
-//                             "{}: step should ignore {:?}",
-//                             msgn,
-//                             msgt
-//                         );
-//                     } else {
-//                         assert!(
-//                             recv.try_recv().is_ok(),
-//                             "{}: cannot receive {:?} on recvc chan",
-//                             msgn,
-//                             msgt
-//                         );
-//                     }
-//                 }
-//             }
-//         });
-//     }
-//
-//     // TODO
-//     // cancal and stop should unblock step()
-//     #[test]
-//     fn t_node_step_unblock() {}
-//
-//     fn append_step(raft: &mut Raft<SafeMemStorage>, m: Message) -> Result<(), RaftError> {
-//         msgs.lock().unwrap().push(m);
-//         Ok(())
-//     }
-//
-//     // ensure that node.Propose sends the given proposal to the underlying raft.
-//     #[test]
-//     fn t_node_process() {
-//         flexi_logger::Logger::with_env().start();
-//         smol::run(async {
-//             {
-//                 msgs.lock().unwrap().clear();
-//             }
-//             let s = SafeMemStorage::new();
-//             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
-//             let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
-//             let mut node1 = node.clone();
-//             Task::spawn(async move { node1.run().await }).detach();
-//             if let Err(err) = node.campaign() {
-//                 panic!(err);
-//             }
-//             loop {
-//                 let ready_rx = node.ready();
-//                 let rd = ready_rx.recv().await.unwrap();
-//                 s.wl().append(rd.entries.clone());
-//                 // change the step function to append_step until this raft becomes leader.
-//                 // info!("{:?}", rd);
-//                 if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
-//                     node.advance();
-//                     break;
-//                 }
-//                 node.advance();
-//             }
-//
-//             assert!(node.propose("somedata".as_bytes()).is_ok());
-//             node.stop();
-//             info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
-//         });
-//     }
-//
-//     #[test]
-//     fn t_node_read_index() {
-//         flexi_logger::Logger::with_env().start();
-//         smol::run(async {
-//             let s = SafeMemStorage::new();
-//             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
-//             let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
-//             let wrs = vec![ReadState {
-//                 index: 1,
-//                 request_ctx: "somedata".as_bytes().to_vec(),
-//             }];
-//             {
-//                 node.wl_raw_node().raft.read_states = wrs.clone();
-//             }
-//             let mut node1 = node.clone();
-//
-//             Task::spawn(async move { node1.run().await }).detach();
-//             if let Err(err) = node.campaign() {
-//                 panic!(err);
-//             }
-//             loop {
-//                 let ready = node.ready_c.rx();
-//                 let ready = ready.recv().await.unwrap();
-//                 {
-//                     let mut raw_node = node.wl_raw_node();
-//                     let expect = ready.read_states.clone();
-//                     assert_eq!(expect, wrs);
-//                     s.wl().append(ready.entries);
-//                     if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
-//                         node.advance();
-//                         break;
-//                     }
-//                 }
-//
-//                 node.advance();
-//             }
-//
-//             let w_request = "somedata2".as_bytes().to_vec();
-//             node.read_index(w_request.clone());
-//             node.stop();
-//         });
-//     }
-// }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::new_test_raw_node;
+    use crate::node::{InnerChan, InnerNode, Node};
+    use crate::raft::{ReadOnlyOption, NO_LIMIT};
+    use crate::raftpb::raft::MessageType::MsgProp;
+    use crate::raftpb::raft::{Message, MessageType};
+    use crate::storage::SafeMemStorage;
+    use crate::util::is_local_message;
+    use lazy_static::lazy_static;
+    use nom::error::append_error;
+    use protobuf::ProtobufEnum;
+    use std::sync::{Arc, Mutex};
+    use env_logger::Env;
+    use tokio::time::Duration;
+    lazy_static! {
+    /// This is an example for using doc comment attributes
+    static ref msgs: Arc < Mutex < Vec <Message > > > = Arc::new(Mutex::new(vec ! []));
+    }
+
+    #[test]
+    fn t_drop() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let mut ch: InnerChan<usize> = InnerChan::new();
+            let rx = ch.rx.take();
+            drop(rx);
+            let tx = ch.tx();
+            let res = tx.send(19).await;
+            assert!(res.is_err());
+        });
+    }
+
+    // ensures that node.step sends msgProp to propc chan
+    // and other kinds of messages to recvc chan.
+    #[test]
+    fn t_node_step() {
+        env_logger::try_init_from_env(Env::new().filter("info"));
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            for msgn in 0..MessageType::MsgPreVoteResp.value() {
+                let mut node: InnerNode<SafeMemStorage> =
+                    InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
+                node.prop_c = InnerChan::new();
+                node.recv_c = InnerChan::new();
+                let msgt = MessageType::from_i32(msgn).unwrap();
+                let mut msg = Message::new();
+                msg.set_field_type(msgt);
+                node.step(msg);
+                // Proposal goes to proc chan. Others go to recvc chan.
+                if msgt == MsgProp {
+                    let proposal_rx = node.prop_c.rx();
+                    assert!(
+                        proposal_rx.try_recv().is_ok(),
+                        "{}: cannot receive {:?} on propc chan",
+                        msgn,
+                        msgt
+                    );
+                } else {
+                    let recv = node.recv_c.rx();
+                    if is_local_message(msgt) {
+                        assert!(
+                            recv.try_recv().is_err(),
+                            "{}: step should ignore {:?}",
+                            msgn,
+                            msgt
+                        );
+                    } else {
+                        assert!(
+                            recv.try_recv().is_ok(),
+                            "{}: cannot receive {:?} on recvc chan",
+                            msgn,
+                            msgt
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    // TODO
+    // cancal and stop should unblock step()
+    #[test]
+    fn t_node_step_unblock() {}
+
+    fn append_step(raft: &mut Raft<SafeMemStorage>, m: Message) -> Result<(), RaftError> {
+        msgs.lock().unwrap().push(m);
+        Ok(())
+    }
+
+    // ensure that node.Propose sends the given proposal to the underlying raft.
+    #[test]
+    fn t_node_process() {
+        env_logger::try_init_from_env(Env::new().filter("info"));
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            {
+                msgs.lock().unwrap().clear();
+            }
+            let s = SafeMemStorage::new();
+            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+            let mut node1 = node.clone();
+            tokio::spawn(async move {node1.run().await});
+            let ok = node.campaign().await;
+            assert!(ok.is_ok());
+            loop {
+                let ready_rx = node.ready().await;
+                let rd = ready_rx.recv().await.unwrap();
+                s.wl().append(rd.entries.clone());
+                // change the step function to append_step until this raft becomes leader.
+                // info!("{:?}", rd);
+                if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
+                    node.advance();
+                    break;
+                }
+                node.advance();
+            }
+
+            assert!(node.propose("somedata".as_bytes()).await.is_ok());
+            node.stop();
+            info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
+        });
+    }
+
+    #[test]
+    fn t_node_read_index() {
+        env_logger::try_init_from_env(Env::new().filter("info"));
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let s = SafeMemStorage::new();
+            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+            let wrs = vec![ReadState {
+                index: 1,
+                request_ctx: "somedata".as_bytes().to_vec(),
+            }];
+            {
+                node.wl_raw_node().raft.read_states = wrs.clone();
+            }
+            let mut node1 = node.clone();
+
+            tokio::spawn(async move {node1.run().await});
+            if let Err(err) = node.campaign().await {
+                panic!(err);
+            }
+            loop {
+                let ready = node.ready_c.rx();
+                let ready = ready.recv().await.unwrap();
+                {
+                    let mut raw_node = node.wl_raw_node();
+                    let expect = ready.read_states.clone();
+                    assert_eq!(expect, wrs);
+                    s.wl().append(ready.entries);
+                    if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
+                        node.advance();
+                        break;
+                    }
+                }
+
+                node.advance();
+            }
+
+            let w_request = "somedata2".as_bytes().to_vec();
+            node.read_index(w_request.clone());
+            node.stop();
+        });
+    }
+}

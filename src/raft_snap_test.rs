@@ -58,7 +58,8 @@ mod tests {
 
     #[test]
     fn pending_snapshot_pause_replication() {
-        flexi_logger::Logger::try_with_env().unwrap().start().unwrap();
+        env_logger::try_init_from_env(Env::new().filter("info"));
+
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -80,7 +81,8 @@ mod tests {
 
     #[test]
     fn snapshot_failure() {
-        flexi_logger::Logger::try_with_env().unwrap().start();
+        env_logger::try_init_from_env(Env::new().filter("info"));
+
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
