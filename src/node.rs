@@ -172,7 +172,6 @@ impl Ready {
 }
 
 use async_trait::async_trait;
-use tokio_global::AutoRuntime;
 
 /// represents a node in a raft cluster.
 #[async_trait]
@@ -733,9 +732,9 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         msg.from = id;
         msg.reject = rejected;
         select! {
-                 _ = recv.send(msg) => {}
-                 _ = done.recv() => {}
-            }
+           _ = recv.send(msg) => {}
+           _ = done.recv() => {}
+        }
     }
 
     async fn stop(&self) {
@@ -808,7 +807,7 @@ mod tests {
                 let msgt = MessageType::from_i32(msgn).unwrap();
                 let mut msg = Message::new();
                 msg.set_field_type(msgt);
-                node.step(msg);
+                node.step(msg).await;
                 // Proposal goes to proc chan. Others go to recvc chan.
                 if msgt == MsgProp {
                     let proposal_rx = node.prop_c.rx();
@@ -862,7 +861,7 @@ mod tests {
             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
             let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
             let mut node1 = node.clone();
-            tokio::spawn(async move {node1.run().await});
+            tokio::spawn(async move { node1.run().await });
             let ok = node.campaign().await;
             assert!(ok.is_ok());
             loop {
@@ -900,7 +899,7 @@ mod tests {
             }
             let mut node1 = node.clone();
 
-            tokio::spawn(async move {node1.run().await});
+            tokio::spawn(async move { node1.run().await });
             if let Err(err) = node.campaign().await {
                 panic!(err);
             }
