@@ -237,7 +237,7 @@ pub trait Node {
 
     /// ReadIndex request a read state. The read state will be set in the ready.
     /// Read state has a read index. Once the application advances further than the read
-    /// index, any linearizable read requests issued before the read request can be
+    /// index, any linearize read requests issued before the read request can be
     /// processed safely. The read state will have the same rctx attached.
     async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()>;
 
@@ -302,11 +302,36 @@ impl MsgWithResult {
         }
     }
 
+    pub fn new_with_msg(msg: Message) -> Self {
+        MsgWithResult {
+            m: Some(msg),
+            result: None,
+        }
+    }
+
     pub fn new_with_channel(tx: Sender<SafeResult<()>>, rx: Receiver<SafeResult<()>>) -> Self {
         MsgWithResult {
             m: None,
             result: Some(InnerChan::new_with_channel(tx, rx)),
         }
+    }
+
+    pub async fn send(&self, msg: SafeResult<()>) {
+        let tx = self.result.as_ref().unwrap().tx_ref();
+        tx.send(msg).await;
+    }
+
+    pub async fn receive(&self) -> SafeResult<()> {
+        let rx = self.result.as_ref().unwrap().rx_ref();
+        rx.recv().await.unwrap()
+    }
+
+    pub fn get_tx(&self) -> Sender<SafeResult<()>> {
+        self.result.as_ref().unwrap().tx()
+    }
+
+    pub fn get_rx(&self) -> Receiver<SafeResult<()>> {
+        self.result.as_ref().unwrap().rx()
     }
 }
 
@@ -364,6 +389,13 @@ impl<T> InnerChan<T> {
 
     pub fn rx_ref(&self) -> &Receiver<T> {
         self.rx.as_ref().unwrap()
+    }
+
+    pub async fn try_send(&self, msg: T) -> Result<(), async_channel::SendError<T>> {
+        if let Some(tx) = &self.tx {
+            return tx.send(msg).await;
+        }
+        Ok(())
     }
 }
 
@@ -478,9 +510,9 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                     pm = self.prop_c.rx_ref().recv() => {
                         let pm: MsgWithResult = pm.unwrap();
                         if !self.is_voter() {
-                            pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NotIsVoter)).await;
+                            pm.send(Err(RaftError::NotIsVoter)).await;
                         }else if !self.rl_raw_node().raft.has_leader() {
-                           pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NoLeader)).await;
+                            pm.send(Err(RaftError::NoLeader)).await;
                         }else {
                               let mut msg: Message = pm.m.as_ref().unwrap().clone();
                               msg.set_from(self.rl_raw_node().raft.id);
@@ -540,8 +572,7 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
             }
         }
         let ch = self.prop_c.tx();
-        let mut pm = MsgWithResult::new();
-        pm.m = Some(m);
+        let mut pm = MsgWithResult::new_with_msg(m);
         if wait {
             pm.result = Some(InnerChan::new());
         }
@@ -556,8 +587,7 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                 return Err(RaftError::Stopped);
             }
         }
-        let rx = pm.result.as_ref().unwrap().rx();
-
+        let rx = pm.get_rx();
         // wait result
         select! {
             res = rx.recv() => return res.unwrap(),

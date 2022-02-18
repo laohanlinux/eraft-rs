@@ -28,5 +28,6 @@ pub mod unstable;
 pub(crate) mod util;
 pub(crate) mod raft_test;
 mod async_rt;
+mod async_ch;
 
 use async_rt::{sleep, wait, wait_timeout};
