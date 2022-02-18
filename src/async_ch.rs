@@ -1,18 +1,20 @@
 use std::sync::Arc;
-use std::sync::mpsc::RecvError;
+use std::time::Duration;
 use futures::SinkExt;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::mpsc::error::{SendError, TryRecvError};
+use async_channel::{bounded, Sender, Receiver, SendError, RecvError, TryRecvError};
+use tokio::select;
 use crate::node::SafeResult;
+use crate::raftpb::raft::Message;
 
+#[derive(Clone)]
 pub(crate) struct Channel<T> {
     rx: Option<Receiver<T>>,
     tx: Option<Sender<T>>,
 }
 
 impl<T> Channel<T> {
-    fn new(n: usize) -> Self {
-        let (tx, rx) = channel(n);
+    pub(crate) fn new(n: usize) -> Self {
+        let (tx, rx) = bounded(n);
         Channel {
             rx: Some(rx),
             tx: Some(tx),
@@ -25,58 +27,79 @@ impl<T> Channel<T> {
         Ok(())
     }
 
-    async fn try_recv(&mut self) -> Result<T, TryRecvError> {
-        if let Some(rx) = &mut self.rx {
+    async fn try_recv(&self) -> Result<T, TryRecvError> {
+        if let Some(rx) = &self.rx {
             return rx.try_recv();
         }
         Err(TryRecvError::Empty)
     }
 
-    async fn recv(&mut self) -> Option<T> {
-        let rx = self.rx.as_mut().unwrap();
+    pub(crate) async fn recv(&self) -> Result<T, async_channel::RecvError> {
+        let rx = self.rx.as_ref().unwrap();
         rx.recv().await
     }
 
-    fn tx(&self) -> Sender<T> {
+    pub(crate) async fn send(&self, msg: T) -> Result<(), SendError<T>> {
+        let tx = self.tx.as_ref().unwrap();
+        tx.send(msg).await
+    }
+
+    pub(crate) fn tx(&self) -> Sender<T> {
         self.tx.as_ref().unwrap().clone()
+    }
+
+    pub(crate) fn take_tx(&mut self) -> Option<Sender<T>> {
+        self.tx.take()
     }
 }
 
-
-pub(crate) struct FutChannels {
-    ch: Channel<Sender<SafeResult<()>>>,
+#[derive(Clone)]
+pub(crate) struct MsgWithResult {
+    m: Option<Message>,
+    ch: Option<Sender<SafeResult<()>>>,
 }
 
-impl FutChannels {
-    fn new(n: usize) -> Self {
-        FutChannels {
-            ch: Channel::new(n),
+impl Default for MsgWithResult {
+    fn default() -> Self {
+        MsgWithResult {
+            m: None,
+            ch: None,
+        }
+    }
+}
+
+impl MsgWithResult {
+    pub fn new() -> Self {
+        MsgWithResult {
+            m: None,
+            ch: None,
         }
     }
 
-    async fn recv(&mut self) -> Option<Sender<SafeResult<()>>> {
-        self.ch.recv().await
+    pub fn new_with_msg(msg: Message) -> Self {
+        MsgWithResult {
+            m: Some(msg),
+            ch: None,
+        }
     }
 
-    fn tx(&self) -> Sender<Sender<SafeResult<()>>> {
-        self.ch.tx()
+    pub fn new_with_channel(tx: Sender<SafeResult<()>>, msg: Message) -> Self {
+        MsgWithResult {
+            m: Some(msg),
+            ch: Some(tx),
+        }
+    }
+
+    pub fn get_msg(&self) -> Option<&Message> {
+        self.m.as_ref()
+    }
+
+    pub(crate) async fn notify(&self, msg: SafeResult<()>) {
+        if let Some(sender) = &self.ch {
+            sender.send(msg).await;
+        }
     }
 }
-
 
 #[tokio::test]
-async fn it_works() {
-    let mut ch = Channel::new(1);
-    let tx = ch.tx();
-
-    let mut pm = Channel::new(1);
-    let mut pm_tx = pm.tx();
-    tokio::spawn(async move {
-        pm_tx.send(tx).await;
-    });
-    let tx_ch = pm.recv().await.unwrap();
-    tx_ch.send(100).await;
-
-    let last = ch.recv().await.unwrap();
-    println!("last: {}", last);
-}
+async fn it_works() {}
