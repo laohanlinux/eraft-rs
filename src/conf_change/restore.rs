@@ -283,7 +283,7 @@ mod tests {
         // previously voters.
         //
         // NB: this code avoids creating non-nil empty slices (here and below).
-        let n_outgoing_retained_voters = r.gen_range(0..=(n_voters + 1));
+        let n_outgoing_retained_voters = r.gen_range(0..(n_voters + 1));
         if n_outgoing_retained_voters > 0 || n_removed_voters > 0 {
             cs.voters_outgoing
                 .extend_from_slice(&cs.voters[..n_outgoing_retained_voters]);
