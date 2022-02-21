@@ -172,7 +172,7 @@ impl Ready {
 }
 
 use async_trait::async_trait;
-use tokio_global::AutoRuntime;
+use crate::async_ch::{Channel, MsgWithResult};
 
 /// represents a node in a raft cluster.
 #[async_trait]
@@ -210,7 +210,7 @@ pub trait Node {
     ///
     /// NOTE: No committed entries from the next Ready may be applied until all committed entries
     /// and snapshots from the previous one have finished.
-    async fn ready(&self) -> Receiver<Ready>;
+    fn ready(&self) -> Receiver<Ready>;
 
     /// Advance notifies the Node that the application has saved progress up to the last Ready.
     /// It prepares the node to return the next available Ready.
@@ -238,7 +238,7 @@ pub trait Node {
 
     /// ReadIndex request a read state. The read state will be set in the ready.
     /// Read state has a read index. Once the application advances further than the read
-    /// index, any linearizable read requests issued before the read request can be
+    /// index, any linearize read requests issued before the read request can be
     /// processed safely. The read state will have the same rctx attached.
     async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()>;
 
@@ -278,37 +278,6 @@ pub fn is_empty_hard_state(st: &HardState) -> bool {
 /// returns true if the given snapshot is empty.
 pub fn is_empty_snapshot(sp: &Snapshot) -> bool {
     sp.get_metadata().get_index() == 0
-}
-
-#[derive(Clone)]
-pub(crate) struct MsgWithResult {
-    m: Option<Message>,
-    result: Option<InnerChan<SafeResult<()>>>,
-}
-
-impl Default for MsgWithResult {
-    fn default() -> Self {
-        MsgWithResult {
-            m: None,
-            result: None,
-        }
-    }
-}
-
-impl MsgWithResult {
-    pub fn new() -> Self {
-        MsgWithResult {
-            m: None,
-            result: None,
-        }
-    }
-
-    pub fn new_with_channel(tx: Sender<SafeResult<()>>, rx: Receiver<SafeResult<()>>) -> Self {
-        MsgWithResult {
-            m: None,
-            result: Some(InnerChan::new_with_channel(tx, rx)),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -366,6 +335,13 @@ impl<T> InnerChan<T> {
     pub fn rx_ref(&self) -> &Receiver<T> {
         self.rx.as_ref().unwrap()
     }
+
+    pub async fn try_send(&self, msg: T) -> Result<(), async_channel::SendError<T>> {
+        if let Some(tx) = &self.tx {
+            return tx.send(msg).await;
+        }
+        Ok(())
+    }
 }
 
 pub struct Peer {
@@ -392,14 +368,14 @@ pub(crate) async fn start_node<S: Storage + Send + Sync + Clone + 'static>(
 
 #[derive(Clone)]
 pub(crate) struct InnerNode<S: Storage> {
-    pub(crate) prop_c: InnerChan<MsgWithResult>,
-    pub(crate) recv_c: InnerChan<Message>,
+    pub(crate) prop_c: Channel<MsgWithResult>,
+    pub(crate) recv_c: Channel<Message>,
     conf_c: InnerChan<ConfChangeV2>,
     conf_state_c: InnerChan<ConfState>,
     ready_c: InnerChan<Ready>,
     advance: InnerChan<()>,
     tick_c: InnerChan<()>,
-    done: InnerChan<()>,
+    done: Channel<()>,
     stop: InnerChan<()>,
     status: InnerChan<Sender<Status>>,
     raw_node: SafeRawNode<S>,
@@ -408,14 +384,14 @@ pub(crate) struct InnerNode<S: Storage> {
 impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
     fn new(raw_node: SafeRawNode<S>) -> Self {
         InnerNode {
-            prop_c: InnerChan::default(),
-            recv_c: InnerChan::default(),
+            prop_c: Channel::new(1),
+            recv_c: Channel::new(1),
             conf_c: InnerChan::default(),
             conf_state_c: InnerChan::default(),
             ready_c: InnerChan::default(),
             advance: InnerChan::default(),
             tick_c: InnerChan::default(),
-            done: InnerChan::default(),
+            done: Channel::new(1),
             stop: InnerChan::default(),
             status: InnerChan::default(),
             raw_node,
@@ -473,25 +449,23 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
 
                         select! {
                             _ = self.conf_state_c.tx_ref().send(cs) => {}
-                            _ = self.done.rx_ref().recv() => {}
+                            _ = self.done.recv() => {}
                         }
                     }
-                    pm = self.prop_c.rx_ref().recv() => {
-                        let pm: MsgWithResult = pm.unwrap();
+                    pm = self.prop_c.recv() => {
+                        let mut pm: MsgWithResult = pm.unwrap();
                         if !self.is_voter() {
-                            pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NotIsVoter)).await;
+                            pm.notify(Err(RaftError::NotIsVoter)).await;
                         }else if !self.rl_raw_node().raft.has_leader() {
-                           pm.result.as_ref().unwrap().tx_ref().send(Err(RaftError::NoLeader)).await;
+                            pm.notify(Err(RaftError::NoLeader)).await;
                         }else {
-                              let mut msg: Message = pm.m.as_ref().unwrap().clone();
+                              let mut msg: Message = pm.get_msg().unwrap().clone();
                               msg.set_from(self.rl_raw_node().raft.id);
-                              let res = self.step(msg).await;
-                              if let Some(result) =  pm.result {
-                                  result.tx_ref().send(res).await.unwrap();
-                              }
+                              let res = self.wl_raw_node().step(msg);
+                              pm.notify_and_close(res).await;
                         }
                     }
-                    msg = self.recv_c.rx_ref().recv() => {
+                    msg = self.recv_c.recv() => {
                         let msg: Message = msg.unwrap();
                         // filter out response message from unknown From.
                         let mut raw_node = self.wl_raw_node();
@@ -514,8 +488,8 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                         status.unwrap().send(_status).await;
                     }
                     _ = self.stop.rx_ref().recv() => {
-                        if let Some(rx) = self.done.rx.take() {
-                            self.done.tx_ref().send(()).await;
+                        if let Some(tx) = self.done.take_tx() {
+                            tx.send(()).await;
                         }
                         return;
                     }
@@ -534,35 +508,34 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
     async fn step_wait_option(&self, m: Message, wait: bool) -> SafeResult<()> {
         if m.get_field_type() != MsgProp {
             select! {
-                _ = self.recv_c.tx.as_ref().unwrap().send(m.clone()) => return Ok(()),
-                _ = self.done.rx.as_ref().unwrap().recv() => {
+                _ = self.recv_c.send(m.clone()) => return Ok(()),
+                _ = self.done.recv() => {
                     return Err(RaftError::Stopped);
                 }
             }
         }
-        let ch = self.prop_c.tx();
-        let mut pm = MsgWithResult::new();
-        pm.m = Some(m);
-        if wait {
-            pm.result = Some(InnerChan::new());
-        }
 
+        let ch = self.prop_c.tx();
+        let mut notify = Channel::new(1);
+        let mut props_msg = if !wait {
+            MsgWithResult::new_with_msg(m.clone())
+        } else {
+            MsgWithResult::new_with_channel(notify.tx(), m)
+        };
         select! {
-            _ = ch.send(pm.clone()) => {
+            _ = ch.send(props_msg) => {
                 if !wait {
                     return Ok(());
                 }
             }
-            _ = self.done.rx.as_ref().unwrap().recv() => {
+            _ = self.done.recv() => {
                 return Err(RaftError::Stopped);
             }
         }
-        let rx = pm.result.as_ref().unwrap().rx();
-
         // wait result
         select! {
-            res = rx.recv() => return res.unwrap(),
-            _ = self.done.rx_ref().recv() => return Err(RaftError::Stopped)
+            res = notify.recv() => return res.unwrap(),
+            _ = self.done.recv() => return Err(RaftError::Stopped)
         }
     }
 
@@ -624,11 +597,14 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
     }
 
     async fn propose(&self, data: &[u8]) -> SafeResult<()> {
-        let mut msg = Message::new();
-        msg.set_field_type(MsgProp);
-        let mut entry = Entry::new();
-        entry.set_Data(Bytes::from(data.to_vec()));
-        msg.set_entries(RepeatedField::from(vec![entry]));
+        let msg = Message {
+            field_type: MsgProp,
+            entries: RepeatedField::from(vec![Entry {
+                Data: Bytes::from(data.to_vec()),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
         self.step_wait(msg).await
     }
 
@@ -649,45 +625,43 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         Ok(())
     }
 
-    async fn ready(&self) -> Receiver<Ready> {
+    fn ready(&self) -> Receiver<Ready> {
         self.ready_c.rx()
     }
 
     async fn advance(&self) {
         let advance = self.advance.tx();
-        let done = self.done.rx();
-
         select! {
-            _ = advance.send(()) => {},
-            _ = done.recv() => {}
+            _ = advance.send(()) => {
+                 info!("execute advance");
+            },
+            _ = self.done.recv() => {}
         }
     }
 
     async fn apply_conf_change(&self, cc: ConfChange) -> Option<ConfState> {
         let cc_v2 = cc.as_v2();
         let conf_tx = self.conf_c.tx();
-        let done = self.done.rx_ref();
         select! {
                 _ = conf_tx.send(cc_v2) => {}
-                _ = done.recv() => {}
+                _ = self.done.recv() => {}
             }
         let conf_state = self.conf_state_c.rx();
         select! {
                 res = conf_state.recv() => Some(res.unwrap()),
-                _ = done.recv() => None
+                _ = self.done.recv() => None
             }
     }
 
     async fn transfer_leader_ship(&self, lead: u64, transferee: u64) {
         let recvc = self.recv_c.tx();
-        let done = self.done.rx();
         let mut msg = Message::new();
         msg.set_field_type(MsgTransferLeader);
         msg.set_from(transferee);
         msg.set_to(lead);
         select! {
                 _ = recvc.send(msg) => {} // manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
-                _ = done.recv() => {}
+                _ = self.done.recv() => {}
             }
     }
 
@@ -701,52 +675,48 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
     }
 
     async fn status(&self) -> Status {
-        let done = self.done.rx();
         let status = self.status.tx();
         let ch: InnerChan<Status> = InnerChan::new();
         let (tx, rx) = (ch.tx(), ch.rx());
         select! {
                 _ = status.send(tx) => {},
-                _ = done.recv() => {}
+                _ = self.done.recv() => {}
             }
         rx.recv().await.unwrap()
     }
 
     async fn report_unreachable(&self, id: u64) {
         let recv = self.recv_c.tx();
-        let done = self.done.rx();
         let mut msg = Message::new();
         msg.set_field_type(MsgUnreachable);
         msg.set_from(id);
         select! {
                 _ = recv.send(msg) => {},
-                _ = done.recv() => {}
+                _ = self.done.recv() => {}
             }
     }
 
     async fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
         let recv = self.recv_c.tx();
-        let done = self.done.rx();
         let rejected = status == SnapshotStatus::Failure;
         let mut msg = Message::new();
         msg.field_type = MsgSnapStatus;
         msg.from = id;
         msg.reject = rejected;
         select! {
-                 _ = recv.send(msg) => {}
-                 _ = done.recv() => {}
-            }
+           _ = recv.send(msg) => {}
+           _ = self.done.recv() => {}
+        }
     }
 
     async fn stop(&self) {
-        let done = self.done.rx();
         let stop = self.stop.tx();
         select! {
                 _ = stop.send(()) => {},
-                _ = done.recv() => return
+                _ = self.done.recv() => return
             }
         // Block until the stop has been acknowledged by run()
-        self.done.rx_ref().recv().await;
+        self.done.recv().await;
     }
 }
 
@@ -763,11 +733,13 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::io::Write;
     use super::*;
     use crate::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
-    use crate::raftpb::raft::MessageType::MsgProp;
+    use crate::raftpb::raft::MessageType::{MsgPreVoteResp, MsgProp, MsgVote};
     use crate::raftpb::raft::{Message, MessageType};
     use crate::storage::SafeMemStorage;
     use crate::util::is_local_message;
@@ -776,10 +748,10 @@ mod tests {
     use protobuf::ProtobufEnum;
     use std::sync::{Arc, Mutex};
     use env_logger::Env;
-    use tokio::time::Duration;
+    use tokio::time::{Duration, Instant, sleep};
     lazy_static! {
-    /// This is an example for using doc comment attributes
-    static ref msgs: Arc < Mutex < Vec <Message > > > = Arc::new(Mutex::new(vec ! []));
+        /// This is an example for using doc comment attributes
+        static ref msgs: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(vec ! []));
     }
 
     #[test]
@@ -796,48 +768,47 @@ mod tests {
 
     // ensures that node.step sends msgProp to propc chan
     // and other kinds of messages to recvc chan.
-    #[test]
-    fn t_node_step() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
-            for msgn in 0..MessageType::MsgPreVoteResp.value() {
-                let mut node: InnerNode<SafeMemStorage> =
-                    InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
-                node.prop_c = InnerChan::new();
-                node.recv_c = InnerChan::new();
-                let msgt = MessageType::from_i32(msgn).unwrap();
-                let mut msg = Message::new();
-                msg.set_field_type(msgt);
-                node.step(msg);
-                // Proposal goes to proc chan. Others go to recvc chan.
-                if msgt == MsgProp {
-                    let proposal_rx = node.prop_c.rx();
+    #[tokio::test]
+    async fn t_node_step() {
+        env_logger::try_init_from_env(Env::new().default_filter_or("info"));
+        for msgn in 0..MsgPreVoteResp.value() {
+            let mut node: InnerNode<SafeMemStorage> =
+                InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
+            node.prop_c = Channel::new(1);
+            node.recv_c = Channel::new(1);
+            let msgt = MessageType::from_i32(msgn).unwrap();
+            let mut msg = Message::new();
+            msg.set_field_type(msgt);
+
+            let ok = node.step(msg.clone()).await;
+            assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
+            // Proposal goes to proc chan. Others go to recvc chan.
+            if msgt == MsgProp {
+                let proposal_rx = node.prop_c.recv().await;
+                assert!(
+                    proposal_rx.is_ok(),
+                    "{}: cannot receive {:?} on propc chan",
+                    msgn,
+                    msgt
+                );
+            } else {
+                if is_local_message(msgt) {
                     assert!(
-                        proposal_rx.try_recv().is_ok(),
-                        "{}: cannot receive {:?} on propc chan",
+                        node.recv_c.try_recv().await.is_err(),
+                        "{}: step should ignore {:?}",
                         msgn,
                         msgt
                     );
                 } else {
-                    let recv = node.recv_c.rx();
-                    if is_local_message(msgt) {
-                        assert!(
-                            recv.try_recv().is_err(),
-                            "{}: step should ignore {:?}",
-                            msgn,
-                            msgt
-                        );
-                    } else {
-                        assert!(
-                            recv.try_recv().is_ok(),
-                            "{}: cannot receive {:?} on recvc chan",
-                            msgn,
-                            msgt
-                        );
-                    }
+                    assert!(
+                        node.recv_c.try_recv().await.is_ok(),
+                        "{}: cannot receive {:?} on recvc chan",
+                        msgn,
+                        msgt
+                    );
                 }
             }
-        });
+        }
     }
 
     // TODO
@@ -851,37 +822,35 @@ mod tests {
     }
 
     // ensure that node.Propose sends the given proposal to the underlying raft.
-    #[test]
-    fn t_node_process() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
-            {
-                msgs.lock().unwrap().clear();
-            }
-            let s = SafeMemStorage::new();
-            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
-            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
-            let mut node1 = node.clone();
-            tokio::spawn(async move {node1.run().await});
-            let ok = node.campaign().await;
-            assert!(ok.is_ok());
-            loop {
-                let ready_rx = node.ready().await;
-                let rd = ready_rx.recv().await.unwrap();
-                s.wl().append(rd.entries.clone());
-                // change the step function to append_step until this raft becomes leader.
-                // info!("{:?}", rd);
-                if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
-                    node.advance();
-                    break;
-                }
-                node.advance();
-            }
+    #[tokio::test]
+    async fn t_node_process() {
+        env_logger::try_init_from_env(Env::new().default_filter_or("info"));
+        {
+            msgs.lock().unwrap().clear();
+        }
 
-            assert!(node.propose("somedata".as_bytes()).await.is_ok());
-            node.stop();
-            info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
-        });
+        let s = SafeMemStorage::new();
+        let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+        let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+        let mut node1 = node.clone();
+        tokio::spawn(async move { node1.run().await });
+        let ok = node.campaign().await;
+        assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
+        loop {
+            let rd = node.ready().recv().await.unwrap();
+            info!("get a ready_rx, wait it: {:?}", rd);
+            s.wl().append(rd.entries.clone());
+            // change the step function to append_step until this raft becomes leader.
+            if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
+                node.advance().await;
+                break;
+            }
+            node.advance().await;
+        }
+
+        assert!(node.propose("somedata".as_bytes()).await.is_ok());
+        node.stop().await;
+        info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
     }
 
     #[test]
@@ -900,11 +869,11 @@ mod tests {
             }
             let mut node1 = node.clone();
 
-            tokio::spawn(async move {node1.run().await});
-            if let Err(err) = node.campaign().await {
-                panic!(err);
-            }
+            tokio::spawn(async move { node1.run().await });
+            let ok = node.campaign().await;
+            assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
             loop {
+                info!("t111ry again");
                 let ready = node.ready_c.rx();
                 let ready = ready.recv().await.unwrap();
                 {

@@ -445,7 +445,7 @@ mod tests {
             self.raw_node.wl().step(msg)
         }
 
-        async fn ready(&self) -> Receiver<Ready> {
+        fn ready(&self) -> Receiver<Ready> {
             unimplemented!()
         }
 
