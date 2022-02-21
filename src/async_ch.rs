@@ -2,7 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use futures::SinkExt;
 use async_channel::{bounded, Sender, Receiver, SendError, RecvError, TryRecvError};
+use env_logger::Env;
+use futures::task::SpawnExt;
 use tokio::select;
+use tokio_global::AutoRuntime;
 use crate::node::SafeResult;
 use crate::raftpb::raft::Message;
 
@@ -27,7 +30,7 @@ impl<T> Channel<T> {
         Ok(())
     }
 
-    async fn try_recv(&self) -> Result<T, TryRecvError> {
+    pub(crate) async fn try_recv(&self) -> Result<T, TryRecvError> {
         if let Some(rx) = &self.rx {
             return rx.try_recv();
         }
@@ -99,7 +102,21 @@ impl MsgWithResult {
             sender.send(msg).await;
         }
     }
+
+    pub(crate) async fn notify_and_close(&mut self, msg: SafeResult<()>) {
+        if let  Some(sender) = self.ch.take() {
+            sender.send(msg).await;
+            sender.close();
+        }
+    }
 }
 
 #[tokio::test]
-async fn it_works() {}
+async fn it_works() {
+    env_logger::try_init_from_env(Env::new().filter("info"));
+    let event = Channel::new(1);
+    event.send(100).await.unwrap();
+    println!("send:");
+    let e = event.recv().await.unwrap();
+    println!("{}", e);
+}

@@ -210,7 +210,7 @@ pub trait Node {
     ///
     /// NOTE: No committed entries from the next Ready may be applied until all committed entries
     /// and snapshots from the previous one have finished.
-    async fn ready(&self) -> Receiver<Ready>;
+    fn ready(&self) -> Receiver<Ready>;
 
     /// Advance notifies the Node that the application has saved progress up to the last Ready.
     /// It prepares the node to return the next available Ready.
@@ -453,7 +453,7 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                         }
                     }
                     pm = self.prop_c.recv() => {
-                        let pm: MsgWithResult = pm.unwrap();
+                        let mut pm: MsgWithResult = pm.unwrap();
                         if !self.is_voter() {
                             pm.notify(Err(RaftError::NotIsVoter)).await;
                         }else if !self.rl_raw_node().raft.has_leader() {
@@ -461,8 +461,8 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                         }else {
                               let mut msg: Message = pm.get_msg().unwrap().clone();
                               msg.set_from(self.rl_raw_node().raft.id);
-                              let res = self.step(msg).await;
-                              pm.notify(res).await;
+                              let res = self.wl_raw_node().step(msg);
+                              pm.notify_and_close(res).await;
                         }
                     }
                     msg = self.recv_c.recv() => {
@@ -514,14 +514,14 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
                 }
             }
         }
-        println!("waiting for");
 
         let ch = self.prop_c.tx();
         let mut notify = Channel::new(1);
-        let mut props_msg = MsgWithResult::new_with_msg(m.clone());
-        if wait {
-            props_msg = MsgWithResult::new_with_channel(notify.tx(), m)
-        }
+        let mut props_msg = if !wait {
+            MsgWithResult::new_with_msg(m.clone())
+        } else {
+            MsgWithResult::new_with_channel(notify.tx(), m)
+        };
         select! {
             _ = ch.send(props_msg) => {
                 if !wait {
@@ -597,11 +597,14 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
     }
 
     async fn propose(&self, data: &[u8]) -> SafeResult<()> {
-        let mut msg = Message::new();
-        msg.set_field_type(MsgProp);
-        let mut entry = Entry::new();
-        entry.set_Data(Bytes::from(data.to_vec()));
-        msg.set_entries(RepeatedField::from(vec![entry]));
+        let msg = Message {
+            field_type: MsgProp,
+            entries: RepeatedField::from(vec![Entry {
+                Data: Bytes::from(data.to_vec()),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
         self.step_wait(msg).await
     }
 
@@ -622,7 +625,7 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         Ok(())
     }
 
-    async fn ready(&self) -> Receiver<Ready> {
+    fn ready(&self) -> Receiver<Ready> {
         self.ready_c.rx()
     }
 
@@ -730,11 +733,13 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::io::Write;
     use super::*;
     use crate::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
-    use crate::raftpb::raft::MessageType::MsgProp;
+    use crate::raftpb::raft::MessageType::{MsgPreVoteResp, MsgProp, MsgVote};
     use crate::raftpb::raft::{Message, MessageType};
     use crate::storage::SafeMemStorage;
     use crate::util::is_local_message;
@@ -743,7 +748,7 @@ mod tests {
     use protobuf::ProtobufEnum;
     use std::sync::{Arc, Mutex};
     use env_logger::Env;
-    use tokio::time::{Duration, Instant};
+    use tokio::time::{Duration, Instant, sleep};
     lazy_static! {
         /// This is an example for using doc comment attributes
         static ref msgs: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(vec ! []));
@@ -763,47 +768,47 @@ mod tests {
 
     // ensures that node.step sends msgProp to propc chan
     // and other kinds of messages to recvc chan.
-    #[test]
-    fn t_node_step() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
-            for msgn in 0..MessageType::MsgPreVoteResp.value() {
-                let mut node: InnerNode<SafeMemStorage> =
-                    InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
-                node.prop_c = Channel::new(1);
-                node.recv_c = Channel::new(1);
-                let msgt = MessageType::from_i32(msgn).unwrap();
-                let mut msg = Message::new();
-                msg.set_field_type(msgt);
-                node.step(msg).await;
-                // Proposal goes to proc chan. Others go to recvc chan.
-                if msgt == MsgProp {
-                    let proposal_rx = node.prop_c.recv().await;
+    #[tokio::test]
+    async fn t_node_step() {
+        env_logger::try_init_from_env(Env::new().default_filter_or("info"));
+        for msgn in 0..MsgPreVoteResp.value() {
+            let mut node: InnerNode<SafeMemStorage> =
+                InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
+            node.prop_c = Channel::new(1);
+            node.recv_c = Channel::new(1);
+            let msgt = MessageType::from_i32(msgn).unwrap();
+            let mut msg = Message::new();
+            msg.set_field_type(msgt);
+
+            let ok = node.step(msg.clone()).await;
+            assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
+            // Proposal goes to proc chan. Others go to recvc chan.
+            if msgt == MsgProp {
+                let proposal_rx = node.prop_c.recv().await;
+                assert!(
+                    proposal_rx.is_ok(),
+                    "{}: cannot receive {:?} on propc chan",
+                    msgn,
+                    msgt
+                );
+            } else {
+                if is_local_message(msgt) {
                     assert!(
-                        proposal_rx.is_ok(),
-                        "{}: cannot receive {:?} on propc chan",
+                        node.recv_c.try_recv().await.is_err(),
+                        "{}: step should ignore {:?}",
                         msgn,
                         msgt
                     );
                 } else {
-                    if is_local_message(msgt) {
-                        assert!(
-                            node.recv_c.recv().await.is_err(),
-                            "{}: step should ignore {:?}",
-                            msgn,
-                            msgt
-                        );
-                    } else {
-                        assert!(
-                            node.recv_c.recv().await.is_ok(),
-                            "{}: cannot receive {:?} on recvc chan",
-                            msgn,
-                            msgt
-                        );
-                    }
+                    assert!(
+                        node.recv_c.try_recv().await.is_ok(),
+                        "{}: cannot receive {:?} on recvc chan",
+                        msgn,
+                        msgt
+                    );
                 }
             }
-        });
+        }
     }
 
     // TODO
@@ -830,10 +835,10 @@ mod tests {
         let mut node1 = node.clone();
         tokio::spawn(async move { node1.run().await });
         let ok = node.campaign().await;
-        assert!(ok.is_ok());
+        assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
         loop {
-            let ready_rx = node.ready().await;
-            let rd = ready_rx.recv().await.unwrap();
+            let rd = node.ready().recv().await.unwrap();
+            info!("get a ready_rx, wait it: {:?}", rd);
             s.wl().append(rd.entries.clone());
             // change the step function to append_step until this raft becomes leader.
             if rd.soft_state.as_ref().unwrap().lead == node.rl_raw_node().raft.id {
@@ -865,10 +870,10 @@ mod tests {
             let mut node1 = node.clone();
 
             tokio::spawn(async move { node1.run().await });
-            if let Err(err) = node.campaign().await {
-                panic!(err);
-            }
+            let ok = node.campaign().await;
+            assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
             loop {
+                info!("t111ry again");
                 let ready = node.ready_c.rx();
                 let ready = ready.recv().await.unwrap();
                 {
