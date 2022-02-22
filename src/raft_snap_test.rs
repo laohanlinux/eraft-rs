@@ -14,19 +14,20 @@
 
 #[cfg(test)]
 mod tests {
-    use env_logger::Env;
-    use crate::mock::{
-        new_test_core_node, new_test_inner_node, new_test_raw_node, read_message, MocksEnts,
-    };
     use crate::raftpb::raft::MessageType::{MsgAppResp, MsgProp, MsgSnapStatus};
     use crate::raftpb::raft::{ConfState, Message, Snapshot, SnapshotMetadata};
     use crate::storage::SafeMemStorage;
+    use crate::tests_util::mock::{
+        new_test_core_node, new_test_inner_node, new_test_raw_node, read_message, MocksEnts,
+    };
+    use crate::tests_util::try_init_log;
     use crate::tracker::state::StateType;
+    use env_logger::Env;
     use protobuf::{SingularField, SingularPtrField};
 
     #[test]
     fn sending_snapshot_set_pending_snapshot() {
-        // flexi_logger::Logger::with_env().start();
+        try_init_log();
         let mut raft = new_test_inner_node(0x1, vec![1], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -58,7 +59,7 @@ mod tests {
 
     #[test]
     fn pending_snapshot_pause_replication() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
 
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
@@ -81,7 +82,7 @@ mod tests {
 
     #[test]
     fn snapshot_failure() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
 
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
@@ -119,7 +120,7 @@ mod tests {
 
     #[test]
     fn snapshot_succeed() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
 
@@ -151,7 +152,7 @@ mod tests {
 
     #[test]
     fn snapshot_abort() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
         let mut raft = new_test_inner_node(0x1, vec![0x1, 0x2], 10, 1, SafeMemStorage::new());
         raft.restore(&new_testing_snap());
         raft.become_candidate();
