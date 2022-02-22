@@ -435,7 +435,8 @@ impl<T: Storage> RaftLog<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{
+    use crate::tests_util::try_init_log;
+    use crate::tests_util::mock::{
         new_empty_entry_set, new_entry, new_entry_set, new_log, new_log_with_storage, new_snapshot,
     };
     use crate::raft::NO_LIMIT;
@@ -447,26 +448,9 @@ mod tests {
     use std::io::Write;
     use std::panic::{self, AssertUnwindSafe};
 
-    fn init() {
-        let mut env = env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "trace");
-        env_logger::Builder::from_env(env)
-            .format(|buf, record| {
-                writeln!(
-                    buf,
-                    "{} {} [{}:{}], {}",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                    record.level(),
-                    record.module_path().unwrap_or("<unnamed>"),
-                    record.line().unwrap(),
-                    &record.args()
-                )
-            })
-            .try_init();
-    }
-
     #[test]
     fn it_find_conflict() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2), (3, 3)]);
         // (&[Entry], w_conflict)
         let tests = &[
@@ -499,7 +483,7 @@ mod tests {
 
     #[test]
     fn it_is_up_to_date() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2), (3, 3)]);
         let mut raft_log = new_log();
         raft_log.append(&previous_ents);
@@ -526,7 +510,7 @@ mod tests {
 
     #[test]
     fn it_append() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2)]);
         //([]Entry, w_index, w_ents, w_unstable)
         let tests = vec![
@@ -572,7 +556,7 @@ mod tests {
     //  return false
     #[test]
     fn it_log_maybe_append() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2), (3, 3)]);
         let last_index = 3;
         let last_term = 3;
@@ -770,7 +754,7 @@ mod tests {
     // a compaction
     #[test]
     fn it_compaction_side_effects() {
-        init();
+        try_init_log();
         let mut i = 0;
         // Populate the log with 1000 entries; 750 in stable storage and 250 in unstable.
         let last_index = 1000;
@@ -828,7 +812,7 @@ mod tests {
 
     #[test]
     fn it_has_next_ents() {
-        init();
+        try_init_log();
         let snap = new_snapshot(3, 1);
         let ents = new_entry_set(vec![(4, 1), (5, 1), (6, 1)]);
         // (applied, has_next)
@@ -856,7 +840,7 @@ mod tests {
     // entries correctly.
     #[test]
     fn it_unstable_ents() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2)]);
         // (unstable, w_ents)
         let tests = vec![(3, vec![]), (1, previous_ents.clone())];
@@ -893,7 +877,7 @@ mod tests {
 
     #[test]
     fn it_commit_to() {
-        init();
+        try_init_log();
         let previous_ents = new_entry_set(vec![(1, 1), (2, 2), (3, 3)]);
         let commit = 2;
         // (commit, w_commit, w_panic)
@@ -997,7 +981,7 @@ mod tests {
     // it_compaction ensure that number of log entries is correct after compactions
     #[test]
     fn it_compaction() {
-        init();
+        try_init_log();
         // (last_index, compact, w_left, w_allow)
         let tests = vec![
             // out of upper bound
@@ -1044,7 +1028,7 @@ mod tests {
 
     #[test]
     fn it_is_out_of_bounds() {
-        init();
+        try_init_log();
         let offset = 100;
         let num = 100;
         let storage = SafeMemStorage::new();
@@ -1133,7 +1117,7 @@ mod tests {
 
     #[test]
     fn it_slice() {
-        init();
+        try_init_log();
         let offset = 100;
         let num = 100;
         let last = offset + num;

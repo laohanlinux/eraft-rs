@@ -5,7 +5,6 @@ use async_channel::{bounded, Sender, Receiver, SendError, RecvError, TryRecvErro
 use env_logger::Env;
 use futures::task::SpawnExt;
 use tokio::select;
-use tokio_global::AutoRuntime;
 use crate::node::SafeResult;
 use crate::raftpb::raft::Message;
 
@@ -104,19 +103,9 @@ impl MsgWithResult {
     }
 
     pub(crate) async fn notify_and_close(&mut self, msg: SafeResult<()>) {
-        if let  Some(sender) = self.ch.take() {
+        if let Some(sender) = self.ch.take() {
             sender.send(msg).await;
             sender.close();
         }
     }
-}
-
-#[tokio::test]
-async fn it_works() {
-    env_logger::try_init_from_env(Env::new().filter("info"));
-    let event = Channel::new(1);
-    event.send(100).await.unwrap();
-    println!("send:");
-    let e = event.recv().await.unwrap();
-    println!("{}", e);
 }

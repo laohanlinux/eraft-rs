@@ -733,10 +733,11 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::tests_util;
     use std::io;
     use std::io::Write;
     use super::*;
-    use crate::mock::new_test_raw_node;
+    use crate::tests_util::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::{MsgPreVoteResp, MsgProp, MsgVote};
@@ -749,6 +750,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use env_logger::Env;
     use tokio::time::{Duration, Instant, sleep};
+    use crate::tests_util::try_init_log;
     lazy_static! {
         /// This is an example for using doc comment attributes
         static ref msgs: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(vec ! []));
@@ -770,7 +772,7 @@ mod tests {
     // and other kinds of messages to recvc chan.
     #[tokio::test]
     async fn t_node_step() {
-        env_logger::try_init_from_env(Env::new().default_filter_or("info"));
+        try_init_log();
         for msgn in 0..MsgPreVoteResp.value() {
             let mut node: InnerNode<SafeMemStorage> =
                 InnerNode::new(new_test_raw_node(1, vec![1], 20, 10, SafeMemStorage::new()));
@@ -824,7 +826,7 @@ mod tests {
     // ensure that node.Propose sends the given proposal to the underlying raft.
     #[tokio::test]
     async fn t_node_process() {
-        env_logger::try_init_from_env(Env::new().default_filter_or("info"));
+        tests_util::try_init_log();
         {
             msgs.lock().unwrap().clear();
         }
@@ -855,7 +857,7 @@ mod tests {
 
     #[test]
     fn t_node_read_index() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let s = SafeMemStorage::new();
             let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());

@@ -384,7 +384,7 @@ impl From<u8> for ProgressType {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock::{new_log_with_storage, new_memory, new_test_conf, new_test_raw_node};
+    use crate::tests_util::mock::{new_log_with_storage, new_memory, new_test_conf, new_test_raw_node};
     use crate::node::{Node, Ready, SafeResult, SnapshotStatus};
     use crate::raft::{RaftError, NO_LIMIT};
     use crate::raftpb::raft::ConfChangeTransition::{
@@ -417,6 +417,7 @@ mod tests {
 
     use async_trait::async_trait;
     use env_logger::Env;
+    use crate::tests_util::try_init_log;
 
     #[async_trait]
     impl Node for RawNodeAdapter {
@@ -487,7 +488,7 @@ mod tests {
 
     #[test]
     fn t_raw_node_step() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
 
         let msg_type = (0..MessageType::MsgPreVoteResp.value())
             .map(|id| MessageType::from_i32(id).unwrap())
@@ -541,7 +542,7 @@ mod tests {
     // joint configurations makes sure that they are exited successfully.
     #[test]
     fn t_raw_node_propose_and_conf_change() {
-        env_logger::try_init_from_env(Env::new().filter("info"));
+        try_init_log();
 
         // (cc, exp, exp2)
         let mut tests: Vec<(Box<dyn ConfChangeI>, ConfState, Option<ConfState>)> = vec![

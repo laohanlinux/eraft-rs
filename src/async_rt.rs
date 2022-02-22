@@ -1,8 +1,8 @@
 use std::future::Future;
+use tokio::runtime::Handle;
 use tokio::time::error::Elapsed;
 use tokio::task;
 use tokio::time::{self, Duration};
-use tokio_global::tokio::runtime::Handle;
 
 pub(crate) fn wait_timeout<F>(d: Duration, fut: F) -> Result<F::Output, Elapsed>
     where F: Future + Send + 'static, F::Output: Send + 'static

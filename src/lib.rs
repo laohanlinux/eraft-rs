@@ -8,7 +8,6 @@ extern crate log;
 extern crate nom;
 
 pub mod conf_change;
-pub(crate) mod mock;
 pub mod node;
 pub(crate) mod nom_data_test;
 mod paper_test;
@@ -29,5 +28,6 @@ pub(crate) mod util;
 pub(crate) mod raft_test;
 mod async_rt;
 mod async_ch;
+mod tests_util;
 
 use async_rt::{sleep, wait, wait_timeout};
