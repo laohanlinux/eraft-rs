@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.53"
 thiserror = "1.0.30"
+protobuf = { version = "2.27.1", features = ["with-bytes"] }
+eraft-rs = { path = "../../eraft-rs", version = "0.1" }
+[build-dependencies]
+protoc-rust = "2.27.1"

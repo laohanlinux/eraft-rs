@@ -1,6 +1,13 @@
+mod walpb;
+
+use std::borrow::Cow;
+use std::cell::{Ref, RefCell};
 use std::time::Duration;
 use std::error::Error;
+use std::fs::File;
 use thiserror::Error;
+use eraft_rs::raftpb::raft::HardState;
+use crate::wal::walpb::SnapShot;
 
 pub enum MetaDataType {
     Entry,
@@ -16,7 +23,7 @@ pub enum MetaDataType {
 // The actual size might be larger than this. In general, the default
 // value should be used, but this is defined as an exported variable
 // so that tests can set a different segment size.
-const SEGMENT_SIZE_BYTES: usize = 64 * 1000 * 1000 ; // 64MB
+const SEGMENT_SIZE_BYTES: usize = 64 * 1000 * 1000; // 64MB
 
 #[derive(Error, Clone, Debug, PartialEq)]
 pub enum WalError {
@@ -36,10 +43,24 @@ pub enum WalError {
     DecoderNotFound,
 }
 
-#[cfg(test)]
-mod tests{
-    #[test]
-    fn it() {
+// WAL is a logical representation of the stable storage.
+// WAL is either in read mode or append mode but not both.
+// A newly created WAL is in append mode, and ready for appending records.
+// A just opened WAL is in read mode, and ready for reading records.
+// The WAL will be ready for appending after reading out all the previous records.
+pub struct Wal {
+    dir: String,
+    // dirFile is a fd for the wal directory for syncing on Rename
+    DirFile: Option<File>,
+    metadata: Vec<u8>,
+    state: HardState,
+    start: SnapShot,
+    no_sync: bool,
+    enti: u64,
+}
 
-    }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it() {}
 }
