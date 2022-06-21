@@ -135,7 +135,7 @@ pub const CAMPAIGN_PRE_ELECTION: &'static str = "CampaignPreElction";
 /// of the election when `Config.Prevote` is true).
 pub const CAMPAIGN_ELECTION: &'static str = "CampaignElection";
 /// `CAMPAIGN_TRANSFER` represents the type of leader transfer
-pub const CAMPAIGN_TRANSFER: &'static str = "CompaignTransfer";
+pub const CAMPAIGN_TRANSFER: &'static str = "CampaignTransfer";
 
 #[derive(Error, Clone, Debug, PartialEq)]
 pub enum RaftError {
