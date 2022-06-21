@@ -1,6 +1,5 @@
 #![feature(is_sorted)]
 #![feature(custom_test_frameworks)]
-#![feature(in_band_lifetimes)]
 
 #[macro_use]
 extern crate log;
