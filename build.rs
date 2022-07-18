@@ -1,6 +1,8 @@
+use std::env;
 use protoc_rust::Customize;
 
 fn main() {
+    // TODO: don't need protoc
     protoc_rust::Codegen::new()
         .out_dir("src/raftpb")
         .inputs(&["src/raftpb/raft.proto"])
@@ -11,5 +13,5 @@ fn main() {
             ..Default::default()
         })
         .run()
-        .expect("protoc");
+        .expect("protoc must be installed at your system");
 }

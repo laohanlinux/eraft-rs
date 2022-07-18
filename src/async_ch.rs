@@ -98,13 +98,13 @@ impl MsgWithResult {
 
     pub(crate) async fn notify(&self, msg: SafeResult<()>) {
         if let Some(sender) = &self.ch {
-            sender.send(msg).await;
+            let _ = sender.send(msg).await;
         }
     }
 
     pub(crate) async fn notify_and_close(&mut self, msg: SafeResult<()>) {
         if let Some(sender) = self.ch.take() {
-            sender.send(msg).await;
+            let _ = sender.send(msg).await;
             sender.close();
         }
     }

@@ -40,7 +40,7 @@ mod tests {
         raft.prs.progress.must_get_mut(&0x2).next = first_index;
 
         let index = raft.prs.progress.must_get(&0x2).next - 1;
-        raft.step(Message {
+        let _ = raft.step(Message {
             from: 0x2,
             to: 0x1,
             field_type: MsgAppResp,
