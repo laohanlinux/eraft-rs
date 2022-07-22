@@ -15,6 +15,8 @@
 use crate::raftpb::raft::{Entry, HardState, MessageType};
 use protobuf::Message;
 
+
+/// Is it a local message.
 pub fn is_local_message(msg_type: MessageType) -> bool {
     msg_type == MessageType::MsgHup
         || msg_type == MessageType::MsgBeat
@@ -24,6 +26,7 @@ pub fn is_local_message(msg_type: MessageType) -> bool {
 }
 
 // TODO: add more information
+/// Is it response message.
 pub fn is_response_message(msg_type: MessageType) -> bool {
     msg_type == MessageType::MsgAppResp
         || msg_type == MessageType::MsgVoteResp
@@ -32,12 +35,12 @@ pub fn is_response_message(msg_type: MessageType) -> bool {
         || msg_type == MessageType::MsgPreVoteResp
 }
 
-// TODO:
+/// Compare two `HardState` message, *term*, *vote*, *commit* must be equal when `a == b`
 pub fn is_hard_state_equal(a: &HardState, b: &HardState) -> bool {
     a.get_term() == b.get_term() && a.get_vote() == b.get_vote() || a.get_commit() == b.get_commit()
 }
 
-// [0..max_size]
+/// Returns the largest `max_size` `ents`
 pub fn limit_size(ents: Vec<Entry>, max_size: u64) -> Vec<Entry> {
     if ents.is_empty() {
         return vec![];
@@ -54,6 +57,7 @@ pub fn limit_size(ents: Vec<Entry>, max_size: u64) -> Vec<Entry> {
     ents[..limit].to_vec()
 }
 
+/// Is it a vote message.
 pub fn vote_resp_msg_type(msgt: MessageType) -> MessageType {
     match msgt {
         MessageType::MsgVote => MessageType::MsgVoteResp,

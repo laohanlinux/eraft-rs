@@ -31,12 +31,7 @@ where
     for line in lines {
         let mut rd = Bytes::from(line.to_string()).reader();
         let mut buf = String::new();
-        let mut cmd = TestData {
-            title: "".to_string(),
-            cmd: "".to_string(),
-            cmd_args: vec![],
-            output: "".to_string(),
-        };
+        let mut cmd = TestData::default();
         while let Ok(n) = rd.read_line(&mut buf) {
             if n == 0 {
                 break;
@@ -93,7 +88,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct TestData {
     pub title: String,
     pub cmd: String,

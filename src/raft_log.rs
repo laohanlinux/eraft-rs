@@ -164,7 +164,7 @@ impl<T: Storage> RaftLog<T> {
 
     /// Returns all the unstable entries.
     pub fn unstable_entries(&self) -> &[Entry] {
-        return &self.unstable.entries;
+        &self.unstable.entries
     }
 
     /// Returns all the available entries for execution.
@@ -191,7 +191,7 @@ impl<T: Storage> RaftLog<T> {
     // returns if there is pending snapshot waiting for applying
     pub(crate) fn has_pending_snapshot(&self) -> bool {
         self.unstable.snapshot.is_some()
-            && !is_empty_snapshot(&self.unstable.snapshot.as_ref().unwrap())
+            && !is_empty_snapshot(self.unstable.snapshot.as_ref().unwrap())
     }
 
     pub(crate) fn snapshot(&self) -> Result<Snapshot, RaftLogError> {
@@ -377,7 +377,7 @@ impl<T: Storage> RaftLog<T> {
             }
         }
         if hi > self.unstable.offset {
-            let mut unstable = self.unstable.slice(lo.max(self.unstable.offset), hi);
+            let unstable = self.unstable.slice(lo.max(self.unstable.offset), hi);
             ents.extend_from_slice(&unstable);
         }
 
@@ -419,9 +419,11 @@ impl<T: Storage> RaftLog<T> {
             |term| term,
         )
     }
+}
 
-    fn to_string(&self) -> String {
-        format!(
+impl<T> ToString for RaftLog<T>  where T: Storage{
+   fn to_string(&self) -> String {
+       format!(
             "last_index={}, term={}, committed={}, applied={}, unstable.offset={}, len(unstable.entries)={}",
             self.last_index(),
             self.last_term(),
@@ -430,7 +432,7 @@ impl<T: Storage> RaftLog<T> {
             self.unstable.offset,
             self.unstable.entries.len()
         )
-    }
+   } 
 }
 
 #[cfg(test)]
