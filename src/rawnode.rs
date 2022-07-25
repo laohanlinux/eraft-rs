@@ -228,7 +228,7 @@ impl<S: Storage> RawCoreNode<S> {
         ready
     }
 
-    // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
+    // returns a Ready. This is a read-only operation, i.e. there
     // is no obligation that the Ready must be handled.
     pub(crate) fn ready_without_accept(&self) -> Ready {
         Ready::new(
@@ -282,6 +282,7 @@ impl<S: Storage> RawCoreNode<S> {
 
         false
     }
+
     /// Advance notifies the RawNode that the application has applied and saved progress in the
     /// last Ready results.
     pub fn advance(&mut self, rd: &Ready) {
@@ -306,8 +307,8 @@ impl<S: Storage> RawCoreNode<S> {
     /// WithProgress is a helper to introspect the Progress for this node and its
     /// peers.
     pub fn with_progress<F>(&mut self, mut visitor: F)
-        where
-            F: FnMut(u64, ProgressType, &mut Progress),
+    where
+        F: FnMut(u64, ProgressType, &mut Progress),
     {
         // self.raft.prs.visit()
         self.raft.prs.visit(|id, pr| {
@@ -384,7 +385,6 @@ impl From<u8> for ProgressType {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests_util::mock::{new_log_with_storage, new_memory, new_test_conf, new_test_raw_node};
     use crate::node::{Node, Ready, SafeResult, SnapshotStatus};
     use crate::raft::{RaftError, NO_LIMIT};
     use crate::raftpb::raft::ConfChangeTransition::{
@@ -402,6 +402,9 @@ mod tests {
     use crate::rawnode::{RawCoreNode, RawRaftError, SafeRawNode};
     use crate::status::Status;
     use crate::storage::{SafeMemStorage, Storage};
+    use crate::tests_util::mock::{
+        new_log_with_storage, new_memory, new_test_conf, new_test_raw_node,
+    };
     use crate::util::{is_local_message, is_response_message};
     use async_channel::Receiver;
     use bytes::Bytes;
@@ -415,9 +418,9 @@ mod tests {
         raw_node: SafeRawNode<SafeMemStorage>,
     }
 
+    use crate::tests_util::try_init_log;
     use async_trait::async_trait;
     use env_logger::Env;
-    use crate::tests_util::try_init_log;
 
     #[async_trait]
     impl Node for RawNodeAdapter {

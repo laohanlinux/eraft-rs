@@ -433,7 +433,7 @@ impl<S: Storage> Raft<S> {
             },
             &cs,
         )
-            .unwrap();
+        .unwrap();
         let s_tc = raft.switch_to_config(cfg, prs);
         assert!(equivalent(&cs, &s_tc).is_ok());
 
@@ -603,16 +603,16 @@ impl<S: Storage> Raft<S> {
                     );
                 }
                 Err(e)
-                if e == RaftLogError::FromStorage(
-                    StorageError::SnapshotTemporarilyUnavailable,
-                ) =>
-                    {
-                        debug!(
+                    if e == RaftLogError::FromStorage(
+                        StorageError::SnapshotTemporarilyUnavailable,
+                    ) =>
+                {
+                    debug!(
                             "{:#x} failed to send snapshot to {:#x} because snapshot is temporarily unvalidated",
                             self.id, to
                         );
-                        return false;
-                    }
+                    return false;
+                }
                 Err(e) => panic!("{:?}", e), // TODO(bdarnell)
             }
         } else {
@@ -717,7 +717,7 @@ impl<S: Storage> Raft<S> {
         // If entries were applied (or a snapshot), update our cursor for
         // the next `Ready`, Note that if the current `HardState` contains a
         // new `Commit` index, this does not mean that we're also applying
-        // all of the new entries due to commit pagination by size.
+        // all the new entries due to commit pagination by size.
         let new_applied = rd.applied_cursor();
         if new_applied > 0 {
             let old_applied = self.raft_log.applied;
@@ -1285,7 +1285,12 @@ impl<S: Storage> Raft<S> {
     // handle_append_entries handle append entries RPC request
     fn handle_append_entries(&mut self, m: Message) {
         if m.get_index() < self.raft_log.committed {
-            self.send(Message { to: m.from, field_type: MsgAppResp, index: self.raft_log.committed, ..Default::default() });
+            self.send(Message {
+                to: m.from,
+                field_type: MsgAppResp,
+                index: self.raft_log.committed,
+                ..Default::default()
+            });
             return;
         }
 
@@ -1295,7 +1300,12 @@ impl<S: Storage> Raft<S> {
             m.get_commit(),
             m.get_entries(),
         ) {
-            self.send(Message { to: m.from, field_type: MsgAppResp, index: m_last_index, ..Default::default() });
+            self.send(Message {
+                to: m.from,
+                field_type: MsgAppResp,
+                index: m_last_index,
+                ..Default::default()
+            });
         } else {
             debug!(
                 "{:x} [logterm: {}, index: {}] rejected MsgApp [logterm: {}, index: {}] from {:#x}",
@@ -1306,7 +1316,14 @@ impl<S: Storage> Raft<S> {
                 m.get_index(),
                 m.get_from(),
             );
-            self.send(Message { to: m.from, field_type: MsgAppResp, index: m.index, reject: true, rejectHint: self.raft_log.last_index(), ..Default::default() });
+            self.send(Message {
+                to: m.from,
+                field_type: MsgAppResp,
+                index: m.index,
+                reject: true,
+                rejectHint: self.raft_log.last_index(),
+                ..Default::default()
+            });
         }
     }
 
@@ -1418,10 +1435,10 @@ impl<S: Storage> Raft<S> {
             },
             cs,
         )
-            // This should never happen. Either there's a bug in our config change
-            // handling or the client corrupted the conf change.
-            .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
-            .unwrap();
+        // This should never happen. Either there's a bug in our config change
+        // handling or the client corrupted the conf change.
+        .map_err(|err| panic!("unable to restore config {:?}: {}", cs, err))
+        .unwrap();
         equivalent(cs, &self.switch_to_config(cfg, prs)).unwrap();
         let pr = self.prs.progress.get_mut(&self.id).unwrap();
         pr.maybe_update(pr.next - 1); // TODO(tbg): this is untested and likely unneeded

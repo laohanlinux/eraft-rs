@@ -15,7 +15,7 @@
 use crate::raftpb::raft::{Entry, Snapshot};
 
 // unstable.entries[i] has raft log position i+unstable.offset.
-// Note that unstable.offset may be less than highest log
+// Note that unstable.offset may be less than the highest log
 // position in storage; this means that the next write to storage
 // might need to truncate the log before persisting unstable.entries.
 #[derive(Default, Clone)]
@@ -30,6 +30,7 @@ pub(crate) struct Unstable {
 
 impl Unstable {
     // Returns the index of the first possible entry in entries if it has a snapshot.
+    // FIXME: Why? why not is it last index the snapshot.index filed. it should be last index if look maybe_last_index
     pub(crate) fn maybe_first_index(&self) -> Option<u64> {
         self.snapshot
             .as_ref()
@@ -49,7 +50,7 @@ impl Unstable {
     // Returns the term of the entry at index i, if there is any.
     pub(crate) fn maybe_term(&self, i: u64) -> Option<u64> {
         if i < self.offset {
-            if let Some(snapshot) = self.snapshot.as_ref() {
+            if let Some(ref snapshot) = self.snapshot {
                 if snapshot.get_metadata().get_index() == i {
                     return Some(snapshot.get_metadata().get_term());
                 }
@@ -76,14 +77,14 @@ impl Unstable {
             // an unstable entry
             if gt == t && i >= self.offset {
                 let start = i + 1 - self.offset;
-                // TODO: Optz entries memory 
+                // TODO: Optz entries memory
+                // https://github.com/etcd-io/etcd/blob/main/raft/log_unstable.go#L86
                 self.entries.drain(..start as usize);
                 self.offset = i + 1;
             }
         }
     }
 
-   
     // As same to stable_to, if self.snapshot had written to storage then reset snapshot
     pub(crate) fn stable_snap_to(&mut self, i: u64) {
         if let Some(ref snapshot) = self.snapshot {
@@ -112,6 +113,7 @@ impl Unstable {
                 // portion, so set the offset and replace the entries
                 self.offset = after;
                 self.entries.clear();
+                // TODO: Opz memory, Just move `ents` to `entries`
                 self.entries.extend_from_slice(ents);
             }
             after => {
@@ -150,11 +152,6 @@ mod tests {
     use crate::unstable::Unstable;
 
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-
-    #[test]
     fn it_unstable_maybe_first_index() {
         // (entries, offset, snapshot, w_ok, w_index)
         let tests = vec![
@@ -165,17 +162,17 @@ mod tests {
             (vec![new_entry(5, 1)], 5, Some(new_snapshot(4, 1)), true, 5),
             (vec![], 5, Some(new_snapshot(4, 1)), true, 5),
         ];
-        for (i, (entries, offset, snapshot, w_ok, w_index)) in tests.iter().enumerate() {
+        for (i, (entries, offset, snapshot, w_ok, w_index)) in tests.into_iter().enumerate() {
             let mut u = Unstable {
-                snapshot: snapshot.clone(),
-                entries: entries.clone(),
-                offset: *offset,
+                snapshot,
+                entries,
+                offset,
             };
             match u.maybe_first_index() {
                 Some(i) => {
-                    assert_eq!(i, *w_index);
+                    assert_eq!(i, w_index);
                 }
-                None => assert!(!*w_ok),
+                None => assert!(!w_ok),
             }
         }
     }
@@ -192,17 +189,17 @@ mod tests {
             // empty unstable
             (vec![], 0, None, false, 0),
         ];
-        for (i, (entries, offset, snapshot, w_ok, w_index)) in tests.iter().enumerate() {
+        for (i, (entries, offset, snapshot, w_ok, w_index)) in tests.into_iter().enumerate() {
             let u = Unstable {
-                snapshot: snapshot.clone(),
-                entries: entries.clone(),
-                offset: *offset,
+                snapshot,
+                entries,
+                offset,
             };
             match u.maybe_last_index() {
                 Some(i) => {
-                    assert_eq!(i, *w_index);
+                    assert_eq!(i, w_index);
                 }
-                None => assert!(!*w_ok),
+                None => assert!(!w_ok),
             }
         }
     }
@@ -251,15 +248,15 @@ mod tests {
             (vec![], 5, Some(new_snapshot(4, 1)), 4, true, 1),
             (vec![], 0, None, 5, false, 0),
         ];
-        for (i, (entries, offset, snapshot, index, w_ok, w_term)) in tests.iter().enumerate() {
+        for (i, (entries, offset, snapshot, index, w_ok, w_term)) in tests.into_iter().enumerate() {
             let u = Unstable {
-                snapshot: snapshot.clone(),
-                entries: entries.clone(),
-                offset: *offset,
+                snapshot,
+                entries,
+                offset,
             };
-            match u.maybe_term(*index) {
-                Some(i) => assert_eq!(i, *w_term),
-                None => assert!(!*w_ok),
+            match u.maybe_term(index) {
+                Some(i) => assert_eq!(i, w_term),
+                None => assert!(!w_ok),
             }
         }
     }
@@ -336,16 +333,16 @@ mod tests {
             ), // stable to old entry
         ];
         for (i, (entries, offset, snapshot, index, term, w_offset, w_len)) in
-        tests.iter().enumerate()
+            tests.into_iter().enumerate()
         {
             let mut u = Unstable {
-                snapshot: snapshot.clone(),
-                entries: entries.clone(),
-                offset: *offset,
+                snapshot,
+                entries,
+                offset,
             };
-            u.stable_to(*index, *term);
-            assert_eq!(u.offset, *w_offset);
-            assert_eq!(u.entries.len(), *w_len);
+            u.stable_to(index, term);
+            assert_eq!(u.offset, w_offset);
+            assert_eq!(u.entries.len(), w_len);
         }
     }
 

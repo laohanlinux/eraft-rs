@@ -97,7 +97,7 @@ pub struct Ready {
     /// `Messages` are sent.
     pub entries: Vec<Entry>,
 
-    /// `Snapshot` specifies the snapshot entries to be committed to a
+    /// `Snapshot` specifies the snapshot to be saved to stable storage.
     pub snapshot: Snapshot,
 
     /// `committed_entries` specifies entries to be committed to a
@@ -171,8 +171,8 @@ impl Ready {
     }
 }
 
-use async_trait::async_trait;
 use crate::async_ch::{Channel, MsgWithResult};
+use async_trait::async_trait;
 
 /// represents a node in a raft cluster.
 #[async_trait]
@@ -544,16 +544,16 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
     }
 
     pub fn rl_raw_node_fn<F>(&self, mut f: F)
-        where
-            F: FnMut(RwLockReadGuard<'_, RawCoreNode<S>>),
+    where
+        F: FnMut(RwLockReadGuard<'_, RawCoreNode<S>>),
     {
         let rl = self.rl_raw_node();
         f(rl)
     }
 
     pub fn wl_raw_node_fn<F>(&self, mut f: F)
-        where
-            F: FnMut(RwLockWriteGuard<'_, RawCoreNode<S>>),
+    where
+        F: FnMut(RwLockWriteGuard<'_, RawCoreNode<S>>),
     {
         let wl = self.wl_raw_node();
         f(wl)
@@ -643,14 +643,14 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         let cc_v2 = cc.as_v2();
         let conf_tx = self.conf_c.tx();
         select! {
-                _ = conf_tx.send(cc_v2) => {}
-                _ = self.done.recv() => {}
-            }
+            _ = conf_tx.send(cc_v2) => {}
+            _ = self.done.recv() => {}
+        }
         let conf_state = self.conf_state_c.rx();
         select! {
-                res = conf_state.recv() => Some(res.unwrap()),
-                _ = self.done.recv() => None
-            }
+            res = conf_state.recv() => Some(res.unwrap()),
+            _ = self.done.recv() => None
+        }
     }
 
     async fn transfer_leader_ship(&self, lead: u64, transferee: u64) {
@@ -660,9 +660,9 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         msg.set_from(transferee);
         msg.set_to(lead);
         select! {
-                _ = recvc.send(msg) => {} // manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
-                _ = self.done.recv() => {}
-            }
+            _ = recvc.send(msg) => {} // manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
+            _ = self.done.recv() => {}
+        }
     }
 
     async fn read_index(&self, rctx: Vec<u8>) -> SafeResult<()> {
@@ -679,9 +679,9 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         let ch: InnerChan<Status> = InnerChan::new();
         let (tx, rx) = (ch.tx(), ch.rx());
         select! {
-                _ = status.send(tx) => {},
-                _ = self.done.recv() => {}
-            }
+            _ = status.send(tx) => {},
+            _ = self.done.recv() => {}
+        }
         rx.recv().await.unwrap()
     }
 
@@ -691,9 +691,9 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
         msg.set_field_type(MsgUnreachable);
         msg.set_from(id);
         select! {
-                _ = recv.send(msg) => {},
-                _ = self.done.recv() => {}
-            }
+            _ = recv.send(msg) => {},
+            _ = self.done.recv() => {}
+        }
     }
 
     async fn report_snapshot(&self, id: u64, status: SnapshotStatus) {
@@ -712,9 +712,9 @@ impl<S: Storage + Send + Sync + 'static> Node for InnerNode<S> {
     async fn stop(&self) {
         let stop = self.stop.tx();
         select! {
-                _ = stop.send(()) => {},
-                _ = self.done.recv() => return
-            }
+            _ = stop.send(()) => {},
+            _ = self.done.recv() => return
+        }
         // Block until the stop has been acknowledged by run()
         self.done.recv().await;
     }
@@ -733,24 +733,24 @@ pub fn must_sync(st: HardState, pre_st: HardState, ents_num: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests_util;
-    use std::io;
-    use std::io::Write;
     use super::*;
-    use crate::tests_util::mock::new_test_raw_node;
     use crate::node::{InnerChan, InnerNode, Node};
     use crate::raft::{ReadOnlyOption, NO_LIMIT};
     use crate::raftpb::raft::MessageType::{MsgPreVoteResp, MsgProp, MsgVote};
     use crate::raftpb::raft::{Message, MessageType};
     use crate::storage::SafeMemStorage;
+    use crate::tests_util;
+    use crate::tests_util::mock::new_test_raw_node;
+    use crate::tests_util::try_init_log;
     use crate::util::is_local_message;
+    use env_logger::Env;
     use lazy_static::lazy_static;
     use nom::error::append_error;
     use protobuf::ProtobufEnum;
+    use std::io;
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
-    use env_logger::Env;
-    use tokio::time::{Duration, Instant, sleep};
-    use crate::tests_util::try_init_log;
+    use tokio::time::{sleep, Duration, Instant};
     lazy_static! {
         /// This is an example for using doc comment attributes
         static ref msgs: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(vec ! []));
@@ -758,14 +758,16 @@ mod tests {
 
     #[test]
     fn t_drop() {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
-            let mut ch: InnerChan<usize> = InnerChan::new();
-            let rx = ch.rx.take();
-            drop(rx);
-            let tx = ch.tx();
-            let res = tx.send(19).await;
-            assert!(res.is_err());
-        });
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async move {
+                let mut ch: InnerChan<usize> = InnerChan::new();
+                let rx = ch.rx.take();
+                drop(rx);
+                let tx = ch.tx();
+                let res = tx.send(19).await;
+                assert!(res.is_err());
+            });
     }
 
     // ensures that node.step sends msgProp to propc chan
@@ -850,7 +852,7 @@ mod tests {
             node.advance().await;
         }
 
-        assert!(node.propose("somedata".as_bytes()).await.is_ok());
+        assert!(node.propose(b"somedata").await.is_ok());
         node.stop().await;
         info!("mail-box: {:?}", node.raw_node.rl().raft.msgs);
     }
@@ -858,43 +860,45 @@ mod tests {
     #[test]
     fn t_node_read_index() {
         try_init_log();
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
-            let s = SafeMemStorage::new();
-            let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
-            let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
-            let wrs = vec![ReadState {
-                index: 1,
-                request_ctx: "somedata".as_bytes().to_vec(),
-            }];
-            {
-                node.wl_raw_node().raft.read_states = wrs.clone();
-            }
-            let mut node1 = node.clone();
-
-            tokio::spawn(async move { node1.run().await });
-            let ok = node.campaign().await;
-            assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
-            loop {
-                info!("t111ry again");
-                let ready = node.ready_c.rx();
-                let ready = ready.recv().await.unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async move {
+                let s = SafeMemStorage::new();
+                let raw_node = new_test_raw_node(1, vec![1], 10, 1, s.clone());
+                let mut node = InnerNode::<SafeMemStorage>::new(raw_node);
+                let wrs = vec![ReadState {
+                    index: 1,
+                    request_ctx: b"somedata".to_vec(),
+                }];
                 {
-                    let mut raw_node = node.wl_raw_node();
-                    let expect = ready.read_states.clone();
-                    assert_eq!(expect, wrs);
-                    s.wl().append(ready.entries);
-                    if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
-                        node.advance();
-                        break;
+                    node.wl_raw_node().raft.read_states = wrs.clone();
+                }
+                let mut node1 = node.clone();
+
+                tokio::spawn(async move { node1.run().await });
+                let ok = node.campaign().await;
+                assert!(ok.is_ok(), "{:?}", ok.unwrap_err());
+                loop {
+                    info!("t111ry again");
+                    let ready = node.ready_c.rx();
+                    let ready = ready.recv().await.unwrap();
+                    {
+                        let mut raw_node = node.wl_raw_node();
+                        let expect = ready.read_states.clone();
+                        assert_eq!(expect, wrs);
+                        s.wl().append(ready.entries);
+                        if ready.soft_state.as_ref().unwrap().lead == raw_node.raft.id {
+                            node.advance();
+                            break;
+                        }
                     }
+
+                    node.advance();
                 }
 
-                node.advance();
-            }
-
-            let w_request = "somedata2".as_bytes().to_vec();
-            node.read_index(w_request.clone());
-            node.stop();
-        });
+                let w_request = b"somedata2".to_vec();
+                node.read_index(w_request.clone());
+                node.stop();
+            });
     }
 }

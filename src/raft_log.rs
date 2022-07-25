@@ -269,7 +269,7 @@ impl<T: Storage> RaftLog<T> {
         }
     }
 
-    // Term return the term of the entry in the given index.
+    /// Return the term of the entry in the given index.
     pub fn term(&self, i: u64) -> Result<u64, RaftLogError> {
         // the valid from range is [index of dummy entry, last index]
         let dummy_index = self.first_index() - 1;
@@ -421,9 +421,9 @@ impl<T: Storage> RaftLog<T> {
     }
 }
 
-impl<T> ToString for RaftLog<T>  where T: Storage{
-   fn to_string(&self) -> String {
-       format!(
+impl<T> ToString for RaftLog<T> where T: Storage {
+    fn to_string(&self) -> String {
+        format!(
             "last_index={}, term={}, committed={}, applied={}, unstable.offset={}, len(unstable.entries)={}",
             self.last_index(),
             self.last_term(),
@@ -432,7 +432,7 @@ impl<T> ToString for RaftLog<T>  where T: Storage{
             self.unstable.offset,
             self.unstable.entries.len()
         )
-   } 
+    }
 }
 
 #[cfg(test)]
