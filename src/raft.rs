@@ -1294,7 +1294,7 @@ impl<S: Storage> Raft<S> {
             return;
         }
 
-        if let Some(m_last_index) = self.raft_log.maybe_append(
+        if let Some(m_last_index) = self.raft_log.try_append(
             m.get_index(),
             m.get_logTerm(),
             m.get_commit(),

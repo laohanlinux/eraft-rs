@@ -83,10 +83,9 @@ impl<T: Storage> RaftLog<T> {
         log
     }
 
-    // maybe_append returns `None` if the entries cannot be appended. Otherwise,
-    // it returns `Some(last index of new entries)`
+    // Returns `None` if the entries cannot be appended. Otherwise, it returns `Some(last index of new entries)`
     // NOTICE: ents[0].index = index + 1, ents[0].term <= log_term if ents not empty, the message come from leader node
-    pub(crate) fn maybe_append(
+    pub(crate) fn try_append(
         &mut self,
         index: u64,
         log_term: u64,
@@ -727,7 +726,7 @@ mod tests {
             raft_log.append(&previous_ents);
             raft_log.committed = commit;
             let catch: Result<Option<u64>, _> = panic::catch_unwind(AssertUnwindSafe(|| {
-                raft_log.maybe_append(index, log_term, committed, &entries)
+                raft_log.try_append(index, log_term, committed, &entries)
             }));
             assert_eq!(catch.is_err(), w_panic);
             if catch.is_err() {
