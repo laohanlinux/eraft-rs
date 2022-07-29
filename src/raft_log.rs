@@ -85,7 +85,7 @@ impl<T: Storage> RaftLog<T> {
 
     // Returns `None` if the entries cannot be appended. Otherwise, it returns `Some(last index of new entries)`
     // NOTICE: ents[0].index = index + 1, ents[0].term <= log_term if ents not empty, the message come from leader node
-    pub(crate) fn try_append_commit(
+    pub fn try_append_commit(
         &mut self,
         index: u64,
         log_term: u64,
@@ -238,6 +238,7 @@ impl<T: Storage> RaftLog<T> {
         }
     }
 
+    // So, committed Must <= applied
     pub(crate) fn applied_to(&mut self, i: u64) {
         if i == 0 {
             return;

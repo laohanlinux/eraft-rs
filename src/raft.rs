@@ -712,6 +712,7 @@ impl<S: Storage> Raft<S> {
     }
 
     // execute applied
+    // ME: I think it very import that advence function will update machine inner state.
     pub(crate) fn advance(&mut self, rd: &Ready) {
         self.reduce_uncommitted_size(&rd.entries);
         // If entries were applied (or a snapshot), update our cursor for
