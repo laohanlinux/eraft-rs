@@ -22,7 +22,7 @@ use thiserror::Error;
 pub enum StorageError {
     // ErrCompacted is returned by Storage.Entries/Compact when a requested
     // index is unavailable because it predates the last snapshot.
-    #[error("requested index is unavailable due to comaction")]
+    #[error("requested index is unavailable due to compaction")]
     Compacted,
     // ErrSnapOutOfDate is returned by Storage.create_snapshot when a requested
     // index is older than the existing snapshot.
@@ -38,7 +38,7 @@ pub enum StorageError {
     SnapshotTemporarilyUnavailable,
 }
 
-/// TODO(tbg): split this into two interfaces, `log_storage` and `state_storage`. 
+/// TODO(tbg): split this into two interfaces, `log_storage` and `state_storage`.
 pub trait Storage {
     /// Returns the saved `HardState` and `ConfState` information.
     fn initial_state(&self) -> Result<(HardState, ConfState), StorageError>;
@@ -131,8 +131,8 @@ impl MemoryStorage {
         cs: T,
         data: Bytes,
     ) -> Result<Snapshot, StorageError>
-        where
-            T: Into<Option<ConfState>>,
+    where
+        T: Into<Option<ConfState>>,
     {
         if i <= self.snapshot.get_metadata().get_index() {
             return Err(StorageError::SnapshotOfDate);

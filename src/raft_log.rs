@@ -85,7 +85,7 @@ impl<T: Storage> RaftLog<T> {
 
     // Returns `None` if the entries cannot be appended. Otherwise, it returns `Some(last index of new entries)`
     // NOTICE: ents[0].index = index + 1, ents[0].term <= log_term if ents not empty, the message come from leader node
-    pub(crate) fn try_append(
+    pub(crate) fn try_append_commit(
         &mut self,
         index: u64,
         log_term: u64,
@@ -420,7 +420,10 @@ impl<T: Storage> RaftLog<T> {
     }
 }
 
-impl<T> ToString for RaftLog<T> where T: Storage {
+impl<T> ToString for RaftLog<T>
+where
+    T: Storage,
+{
     fn to_string(&self) -> String {
         format!(
             "last_index={}, term={}, committed={}, applied={}, unstable.offset={}, len(unstable.entries)={}",
@@ -436,12 +439,12 @@ impl<T> ToString for RaftLog<T> where T: Storage {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests_util::try_init_log;
+    use crate::raft::NO_LIMIT;
+    use crate::storage::{MemoryStorage, SafeMemStorage, Storage, StorageError};
     use crate::tests_util::mock::{
         new_empty_entry_set, new_entry, new_entry_set, new_log, new_log_with_storage, new_snapshot,
     };
-    use crate::raft::NO_LIMIT;
-    use crate::storage::{MemoryStorage, SafeMemStorage, Storage, StorageError};
+    use crate::tests_util::try_init_log;
 
     use crate::raft_log::{RaftLog, RaftLogError};
     use crate::raftpb::raft::{Entry, SnapshotMetadata};
@@ -726,7 +729,7 @@ mod tests {
             raft_log.append(&previous_ents);
             raft_log.committed = commit;
             let catch: Result<Option<u64>, _> = panic::catch_unwind(AssertUnwindSafe(|| {
-                raft_log.try_append(index, log_term, committed, &entries)
+                raft_log.try_append_commit(index, log_term, committed, &entries)
             }));
             assert_eq!(catch.is_err(), w_panic);
             if catch.is_err() {
