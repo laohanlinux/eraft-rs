@@ -134,11 +134,11 @@ impl<T: Storage> RaftLog<T> {
     // Finds the index of the conflict.
     // It returns the first pair of conflicting entries between the existing
     // entries and the given entries, if there are any.
-    // If there is no conflicting entries, and the existing entries contains
+    // 1: If there is no conflicting entries, and the existing entries contains
     // all the given entries, zero will be returned.
-    // If there is no conflicting entries, but the given entries contains new
+    // 2: If there is no conflicting entries, but the given entries contains new
     // entries, the index of the first new entry will be returned.
-    // An entry is considered to be conflicting if it has the same index but
+    // *Note*: An entry is considered to be conflicting if it has the same index but
     // a different term.
     // The first entry MUST be have an index equal to the argument `from`.
     // The index of the given entries MUST be continuously increasing.
@@ -447,10 +447,9 @@ mod tests {
     };
     use crate::tests_util::try_init_log;
 
-    use crate::raft_log::{RaftLog, RaftLogError};
-    use crate::raftpb::raft::{Entry, SnapshotMetadata};
+    use crate::raft_log::RaftLogError;
+    use crate::raftpb::raft::Entry;
     use protobuf::Message;
-    use std::io::Write;
     use std::panic::{self, AssertUnwindSafe};
 
     #[test]
@@ -541,7 +540,7 @@ mod tests {
             let mut storage = MemoryStorage::new();
             assert!(storage.append(previous_ents.clone()).is_ok());
             let mut raft_log = new_log_with_storage(storage);
-            let mut index = raft_log.append(&entries);
+            let index = raft_log.append(&entries);
             // print!("{:?}", raft_log.unstable.entries);
             assert_eq!(index, w_index);
             let g = raft_log.entries(1, NO_LIMIT);
@@ -760,12 +759,11 @@ mod tests {
     #[test]
     fn it_compaction_side_effects() {
         try_init_log();
-        let mut i = 0;
         // Populate the log with 1000 entries; 750 in stable storage and 250 in unstable.
         let last_index = 1000;
         let unstable_index = 750;
         let last_term = last_index;
-        let mut storage = SafeMemStorage::default();
+        let storage = SafeMemStorage::default();
         for ux in 1..=unstable_index {
             assert!(storage.wl().append(new_entry_set(vec![(ux, ux)])).is_ok());
             assert_eq!(storage.rl().first_index().unwrap(), 1);
@@ -787,7 +785,7 @@ mod tests {
         raft_log.applied_to(raft_log.committed);
 
         let offset = 500;
-        storage.wl().compact(offset);
+        storage.wl().compact(offset).unwrap();
         assert_eq!(raft_log.last_index(), last_index);
 
         for i in offset..=raft_log.last_index() {
@@ -824,8 +822,8 @@ mod tests {
         let tests = vec![(0, true), (3, true), (4, true), (5, false)];
 
         for (applied, has_next) in tests {
-            let mut storage = SafeMemStorage::new();
-            storage.wl().apply_snapshot(snap.clone());
+            let storage = SafeMemStorage::new();
+            storage.wl().apply_snapshot(snap.clone()).unwrap();
             let mut raft_log = new_log_with_storage(storage);
             raft_log.append(ents.as_slice());
             assert!(raft_log.maybe_commit(5, 1));
@@ -853,12 +851,15 @@ mod tests {
         for (unstable, w_ents) in tests {
             // append stable entries to storage
             let storage = SafeMemStorage::new();
-            storage.wl().append(
-                previous_ents[..(unstable - 1)]
-                    .iter()
-                    .map(|entry| entry.clone())
-                    .collect(),
-            );
+            storage
+                .wl()
+                .append(
+                    previous_ents[..(unstable - 1)]
+                        .iter()
+                        .map(|entry| entry.clone())
+                        .collect(),
+                )
+                .unwrap();
 
             // append unstable entries to raft_log
             let mut raft_log = new_log_with_storage(storage);
@@ -975,7 +976,7 @@ mod tests {
 
         for (stable_i, stable_t, new_ents, w_unstable) in tests {
             let s = SafeMemStorage::new();
-            s.wl().apply_snapshot(new_snapshot(snap_i, snap_t));
+            s.wl().apply_snapshot(new_snapshot(snap_i, snap_t)).unwrap();
             let mut raft_log = new_log_with_storage(s);
             raft_log.append(new_ents.as_slice());
             raft_log.stable_to(stable_i, stable_t);
@@ -998,7 +999,7 @@ mod tests {
         for (last_index, compact, w_left, w_allow) in tests {
             let storage = SafeMemStorage::new();
             for i in 1..=last_index {
-                storage.wl().append(new_entry_set(vec![(i, 0)]));
+                storage.wl().append(new_entry_set(vec![(i, 0)])).unwrap();
             }
             let mut raft_log = new_log_with_storage(storage.clone());
             raft_log.maybe_commit(last_index, 0);
@@ -1022,7 +1023,7 @@ mod tests {
         let term = 1000;
         let snap = new_snapshot(index, term);
         let storage = SafeMemStorage::new();
-        storage.wl().apply_snapshot(snap.clone());
+        storage.wl().apply_snapshot(snap.clone()).unwrap();
         let raft_log = new_log_with_storage(storage);
         assert!(raft_log.all_entries().is_empty());
         assert_eq!(raft_log.first_index(), index + 1);
@@ -1037,7 +1038,10 @@ mod tests {
         let offset = 100;
         let num = 100;
         let storage = SafeMemStorage::new();
-        storage.wl().apply_snapshot(new_snapshot(offset, 0));
+        storage
+            .wl()
+            .apply_snapshot(new_snapshot(offset, 0))
+            .unwrap();
         let mut raft_log = new_log_with_storage(storage);
         (1..=num).for_each(|i| {
             raft_log.append(new_entry_set(vec![(i + offset, 0)]).as_slice());
@@ -1074,7 +1078,10 @@ mod tests {
         let offset = 100;
         let num = 100;
         let storage = SafeMemStorage::new();
-        storage.wl().apply_snapshot(new_snapshot(offset, 1));
+        storage
+            .wl()
+            .apply_snapshot(new_snapshot(offset, 1))
+            .unwrap();
         let mut raft_log = new_log_with_storage(storage);
         for i in 1..num {
             raft_log.append(new_entry_set(vec![(offset + i, i)]).as_slice());
@@ -1099,7 +1106,10 @@ mod tests {
         let storage_snap_i = 100;
         let unstable_snap_i = storage_snap_i + 5;
         let storage = SafeMemStorage::new();
-        storage.wl().apply_snapshot(new_snapshot(storage_snap_i, 1));
+        storage
+            .wl()
+            .apply_snapshot(new_snapshot(storage_snap_i, 1))
+            .unwrap();
         let mut raft_log = new_log_with_storage(storage);
         raft_log.restore(new_snapshot(unstable_snap_i, 1));
 
@@ -1130,11 +1140,15 @@ mod tests {
         let half_e = new_entry(half, half);
 
         let storage = SafeMemStorage::new();
-        storage.wl().apply_snapshot(new_snapshot(offset, 0));
+        storage
+            .wl()
+            .apply_snapshot(new_snapshot(offset, 0))
+            .unwrap();
         for i in 1..num / 2 {
             storage
                 .wl()
-                .append(new_entry_set(vec![(offset + i, offset + i)]));
+                .append(new_entry_set(vec![(offset + i, offset + i)]))
+                .unwrap();
         }
         let mut raft_log = new_log_with_storage(storage.clone());
         for i in num / 2..num {

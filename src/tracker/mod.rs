@@ -7,13 +7,12 @@ use crate::tracker::progress::{Progress, ProgressMap};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::iter::Cloned;
 
 pub mod inflights;
 pub mod progress;
 pub mod state;
 
-// Config reflects the configuration tracked in a ProgressTacker.
+/// `Config` reflects the configuration tracked in a ProgressTacker.
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct Config {
     pub voters: JointConfig,

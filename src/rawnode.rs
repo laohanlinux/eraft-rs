@@ -98,7 +98,7 @@ impl<S: Storage> RawCoreNode<S> {
     /// state manually by setting up a Storage that has a first index > 1 and which
     /// stores the described ConfState as its InitialState.
     pub fn new(config: Config, storage: S) -> RawCoreNode<S> {
-        let mut raft = Raft::new(config, storage);
+        let raft = Raft::new(config, storage);
         let prev_soft_st = raft.soft_state();
         let prev_hard_st = raft.hard_state();
         RawCoreNode {
@@ -135,6 +135,7 @@ impl<S: Storage> RawCoreNode<S> {
             let mut entry = Entry::new();
             entry.set_Type(EntryConfChange);
             entry.set_Term(1);
+            // Index from 1 start
             entry.set_Index((i + 1) as u64);
             entry.set_Data(Bytes::from(data));
             ents.push(entry);

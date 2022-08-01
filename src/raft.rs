@@ -33,8 +33,8 @@ use crate::raftpb::raft::{
 };
 use crate::raftpb::{entry_to_conf_changei, equivalent, ConfChangeI, ExtendConfChange};
 use crate::rawnode::RawRaftError;
-use crate::read_only::{ReadIndexStatus, ReadOnly, ReadState};
-use crate::storage::{Storage, StorageError, StorageError::SnapshotTemporarilyUnavailable};
+use crate::read_only::{ReadOnly, ReadState};
+use crate::storage::{Storage, StorageError};
 use crate::tracker::{
     self, inflights::Inflights, progress::ProgressMap, state,
     state::StateType as ProgressStateType, ProgressTracker,
@@ -49,7 +49,7 @@ use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
 /// NONE is a placeholder node ID used when there is no leader.
-pub const NONE: u64 = 0;
+pub const NONE: u64 = 0x0;
 pub const NO_LIMIT: u64 = u64::MAX;
 
 /// Represents the type of campaigning
@@ -682,12 +682,12 @@ impl<S: Storage> Raft<S> {
     pub(crate) fn bcast_append(&mut self) {
         let ids = self.prs.visit_nodes();
         let cur_id = self.id;
-        for id in ids.iter().filter(|id| **id != cur_id) {
-            if !self.send_append(*id) {
+        for id in ids.into_iter().filter(|id| *id != cur_id) {
+            if !self.send_append(id) {
                 debug!(
                     "message not to sent, {} inflights full: {}",
                     id,
-                    self.prs.progress.must_get(id).inflights.full()
+                    self.prs.progress.must_get(&id).inflights.full()
                 );
             }
         }
@@ -846,7 +846,8 @@ impl<S: Storage> Raft<S> {
                     from: self.id,
                     field_type: MsgCheckQuorum,
                     ..Default::default()
-                });
+                })
+                .unwrap();
             }
             // If current leader cannot transfer leadership in election_timeout, it becomes leader again.
             if self.state == StateType::Leader && self.lead_transferee != NONE {
@@ -864,7 +865,8 @@ impl<S: Storage> Raft<S> {
                 from: self.id,
                 field_type: MsgBeat,
                 ..Default::default()
-            });
+            })
+            .unwrap();
         }
     }
 
@@ -1468,7 +1470,7 @@ impl<S: Storage> Raft<S> {
     }
 
     pub(crate) fn apply_conf_change(&mut self, cc: &mut ConfChangeV2) -> ConfState {
-        let mut res;
+        let res;
         let mut changer = Changer {
             tracker: self.prs.clone(),
             last_index: self.raft_log.last_index(),
