@@ -398,6 +398,7 @@ impl<S: Storage + Send + Sync + 'static> InnerNode<S> {
         }
     }
 
+    /// The function is too long, maybe use event channel to dispatch the message that is better.
     async fn run(&mut self) {
         let mut wait_advance = false;
         let mut ready = Ready::default();

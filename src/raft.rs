@@ -2153,27 +2153,27 @@ impl<S: Storage> Raft<S> {
     fn callback_transfer_leader(&mut self, m: Message) -> Result<(), RaftError> {
         let pr = self.prs.progress.get_mut(&m.get_from()).unwrap();
         if pr.is_learner {
-            debug!("{:#x} is learner. Ignored transferring leadership", self.id);
+            warn!("{:#x} is learner, ignored transferring leadership", self.id);
             return Ok(());
         }
         let lead_transferee = m.get_from();
         let last_lead_transferee = self.lead_transferee;
         if last_lead_transferee != NONE {
             if last_lead_transferee == lead_transferee {
-                info!(
+                warn!(
                     "{:#x} [term {}] transfer leadership to {:#x} is in progress, ignores request to same node {:#x}",
                     self.id, self.term, lead_transferee, lead_transferee
                 );
                 return Ok(());
             }
             self.abort_leader_transferee();
-            info!(
+            warn!(
                 "{:x} [term {}] abort previous transferring leadership to {:#x}",
                 self.id, self.term, last_lead_transferee
             );
         }
         if lead_transferee == self.id {
-            info!(
+            warn!(
                 "{:x} is already leader. Ignored transferring leadership to self",
                 self.id
             );
@@ -2190,7 +2190,7 @@ impl<S: Storage> Raft<S> {
         let _match = self.prs.progress.get(&m.get_from()).unwrap()._match;
         if _match == self.raft_log.last_index() {
             self.send_timeout_now(lead_transferee);
-            info!(
+            warn!(
                 "{:#x} sends MsgTimeoutNow to {:#x} immediately as {:#x} already has up-to-date log",
                 self.id, lead_transferee, lead_transferee,
             );
