@@ -101,9 +101,11 @@ impl Progress {
     // BecomeProbe transaction into StateProbe. Next is reset to Match+1 or,
     // optionally and if larger, the index of the pending snapshot.
     pub fn become_probe(&mut self) {
+        debug!("become probe");
         // If the original state is StateSnapshot, Progress knows that
         // the pending snapshot has been sent to this peer Successfully, then
         // probes from pendingSnapshot + 1.
+        // FIXME Why You Knows?
         if self.state == StateType::Snapshot {
             let pending_snapshot = self.pending_snapshot;
             self.reset_state(StateType::Probe);
@@ -116,14 +118,15 @@ impl Progress {
 
     /// Become Replicate transaction into StateReplicate, resetting Next to _match + 1
     pub fn become_replicate(&mut self) {
+        info!("become replicate");
         self.reset_state(StateType::Replicate);
         self.next = self._match + 1;
-        info!("become replicate");
     }
 
     /// BecomeSnapshot moves that Progress to StateSnapshot with the specified pending
     /// snapshot
     pub fn become_snapshot(&mut self, snapshot: u64) {
+        info!("become snapshot");
         self.reset_state(StateType::Snapshot);
         self.pending_snapshot = snapshot;
     }

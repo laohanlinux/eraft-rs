@@ -489,7 +489,6 @@ impl<S: Storage> Raft<S> {
     fn send(&mut self, mut m: Message) {
         if m.from == NONE {
             m.from = self.id;
-            info!("sent")
         }
         let msg_type = m.field_type;
         if msg_type == MsgVote
@@ -533,7 +532,7 @@ impl<S: Storage> Raft<S> {
         self.msgs.push(m);
     }
 
-    // send_append sends an append RPC with new entries (if any) and the
+    // Send an append RPC with new entries (if any) and the
     // current commit index to the given peer. Returns true if a message was sent.
     fn send_append(&mut self, to: u64) -> bool {
         self.maybe_send_append(to, true)
